@@ -6,6 +6,7 @@ import { STLExporter } from "three/addons/exporters/STLExporter.js";
 import { StudioView, geometry, rawGeometry } from "./view.js";
 import { bounds, canonical } from "./engine.js";
 import { rhinoRaw, addRhinoMesh } from "./rhino-io.js";
+import { transformMesh, draggedEdit } from "./interaction.js";
 const $ = (id) => document.getElementById(id),
   paramsIDs = [
     "count",
@@ -83,11 +84,14 @@ function request(action, data = {}) {
 async function task(message, fn) {
   if (busy) return;
   busy = true;
+  view.setBusy(true);
   $("progress").hidden = false;
   $("cancelBtn").hidden = false;
   $("progress").value = 0;
   document
-    .querySelectorAll(".controls button,.controls input,.controls select")
+    .querySelectorAll(
+      ".controls button,.controls input,.controls select,.canvas-tools button,#curveEditBtn",
+    )
     .forEach((e) => (e.disabled = true));
   status(message);
   try {
@@ -96,10 +100,13 @@ async function task(message, fn) {
     status(e.message, true);
   } finally {
     busy = false;
+    view.setBusy(false);
     $("progress").hidden = true;
     $("cancelBtn").hidden = true;
     document
-      .querySelectorAll(".controls button,.controls input,.controls select")
+      .querySelectorAll(
+        ".controls button,.controls input,.controls select,.canvas-tools button,#curveEditBtn",
+      )
       .forEach((e) => (e.disabled = false));
   }
 }
@@ -167,7 +174,10 @@ function select(i) {
 }
 const view = new StudioView(
   (i) => {
-    if (!busy) select(i);
+    if (!busy) {
+      if (view.tool === "curve") activateTool("move");
+      select(i);
+    }
   },
   (p, i) => {
     if (busy) return;
@@ -177,7 +187,73 @@ const view = new StudioView(
     showPoint();
     markCurveDirty();
   },
+  onCanvasTransform,
 );
+function activateTool(tool) {
+  if (busy) return;
+  if (output?.mode === "boolean") invalidate();
+  if (tool === "boundary") $("showBoundary").checked = true;
+  editCurve = tool === "curve";
+  if (editCurve) $("pressureEnabled").checked = true;
+  $("curveEditBtn").setAttribute("aria-pressed", editCurve);
+  view.setTool(tool);
+  curveUI();
+}
+document
+  .querySelectorAll("[data-canvas-tool]")
+  .forEach(
+    (button) =>
+      (button.onclick = () => activateTool(button.dataset.canvasTool)),
+  );
+function onCanvasTransform(change) {
+  if (change.type === "cancel") {
+    if (display) syncDisplay(display);
+    return;
+  }
+  if (busy) return;
+  const label =
+    change.type === "boundary"
+      ? "Rotating boundary and regenerating balloon field…"
+      : change.type === "curve"
+        ? "Updating curve pressure…"
+        : "Checking dragged balloon against walls and neighbors…";
+  task(label, async () => {
+    try {
+      if (change.type === "boundary") {
+        boundary = transformMesh(display.boundary, change.matrix);
+        await generate(true);
+        status(
+          "Boundary rotated. Balloon field regenerated in its new orientation; individual edits reset.",
+        );
+      } else if (change.type === "curve") {
+        if ($("pressureEnabled").checked) {
+          await generate();
+          status(
+            "Curve point moved. Pressure applied; individual edits reset.",
+          );
+        } else
+          status("Curve point moved. Enable pressure to deform the balloons.");
+      } else if (change.type === "balloon") {
+        const edit = draggedEdit(
+          display.edits[change.index],
+          change.delta,
+          change.ratio,
+        );
+        const result = await request("edit", { index: change.index, edit });
+        syncDisplay(result);
+        status(
+          result.clamped
+            ? "Drag limited by a wall or neighboring balloon. Accepted position and scale are shown."
+            : "Canvas edit applied. Balloon remains inside the boundary without overlap.",
+        );
+      }
+    } catch (err) {
+      boundary = display.boundary;
+      syncDisplay(display);
+      throw err;
+    }
+  });
+}
 function resetCurve() {
   const b = bounds(boundary);
   points = [
@@ -404,7 +480,11 @@ $("resetBalloonBtn").onclick = () =>
         : "Selected balloon reset to its post-pressure baseline.",
     );
   });
-$("curvePoint").onchange = showPoint;
+$("curvePoint").onchange = () => {
+  view.selectedCurve = Number($("curvePoint").value);
+  showPoint();
+  view.attachTool();
+};
 $("resetCurveBtn").onclick = () => {
   resetCurve();
   markCurveDirty();
@@ -420,9 +500,7 @@ $("updateCurveBtn").onclick = () => {
   markCurveDirty();
 };
 $("curveEditBtn").onclick = () => {
-  editCurve = !editCurve;
-  $("curveEditBtn").setAttribute("aria-pressed", editCurve);
-  curveUI();
+  activateTool(editCurve ? "move" : "curve");
 };
 $("pressureEnabled").onchange = () => {
   curveUI();

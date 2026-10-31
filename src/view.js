@@ -1,6 +1,8 @@
 import * as T from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { bounds } from "./engine.js";
+import { uniformFactor } from "./interaction.js";
 export function geometry(raw) {
   const g = new T.BufferGeometry();
   g.setAttribute(
@@ -22,9 +24,10 @@ export function rawGeometry(g) {
   };
 }
 export class StudioView {
-  constructor(onSelect, onCurve) {
+  constructor(onSelect, onCurve, onTransform) {
     this.onSelect = onSelect;
     this.onCurve = onCurve;
+    this.onTransform = onTransform;
     this.scene = new T.Scene();
     this.scene.add(new T.AmbientLight(0xaff6ff, 1.5));
     for (const [p, intensity] of [
@@ -64,45 +67,308 @@ export class StudioView {
     this.editCurve = false;
     this.selected = -1;
     this.span = 120;
+    this.tool = "move";
+    this.selectedCurve = 0;
+    this.proxy = new T.Object3D();
+    this.scene.add(this.proxy);
+    this.transform = new TransformControls(
+      this.perspective,
+      this.renderers[0].domElement,
+    );
+    this.transform.setSize(0.85);
+    this.transform.setColors(0x9af4f9, 0x21e0ed, 0x789fe8, 0xffffff);
+    this.transformHelper = this.transform.getHelper();
+    this.scene.add(this.transformHelper);
+    this.transform.addEventListener("mouseDown", () => {
+      this.beginTransform();
+      this.orbit.enabled = false;
+    });
+    this.transform.addEventListener("objectChange", () =>
+      this.previewTransform(),
+    );
+    this.transform.addEventListener("mouseUp", () => {
+      this.finishTransform();
+      this.orbit.enabled = !this.busy;
+    });
     this.renderers.forEach((r, i) => {
       new ResizeObserver(() => this.resize(i)).observe(
         r.domElement.parentElement,
       );
-      let down;
-      r.domElement.addEventListener("pointerdown", (e) => {
-        down = [e.clientX, e.clientY];
-        if (i === 1 && this.editCurve) {
-          const hit = this.hit(e, i, this.handles || [])[0];
-          if (hit) {
-            this.drag = hit.object.userData.index;
-            r.domElement.setPointerCapture(e.pointerId);
-            e.preventDefault();
-          }
-        }
-      });
-      r.domElement.addEventListener("pointermove", (e) => {
-        if (i !== 1 || this.drag === undefined) return;
-        this.setRay(e, 1);
-        const point = new T.Vector3();
-        this.ray.ray.intersectPlane(
-          new T.Plane(new T.Vector3(0, 0, 1), -this.points[this.drag][2]),
-          point,
-        );
-        this.points[this.drag] = point.toArray();
-        this.onCurve(this.points, this.drag);
-      });
-      r.domElement.addEventListener("pointerup", (e) => {
-        if (this.drag !== undefined) {
-          this.drag = undefined;
-          return;
-        }
-        if (down && Math.hypot(e.clientX - down[0], e.clientY - down[1]) < 5) {
-          const hit = this.hit(e, i, this.meshes)[0];
-          if (hit) this.onSelect(hit.object.userData.index);
-        }
-      });
+      r.domElement.addEventListener(
+        "pointerdown",
+        (e) => this.pointerDown(e, i),
+        true,
+      );
+      r.domElement.addEventListener(
+        "pointermove",
+        (e) => this.pointerMove(e, i),
+        true,
+      );
+      r.domElement.addEventListener(
+        "pointerup",
+        (e) => this.pointerUp(e, i),
+        true,
+      );
+      r.domElement.addEventListener(
+        "pointercancel",
+        (e) => this.cancelDrag(e, i),
+        true,
+      );
     });
     this.animate();
+  }
+  setBusy(value) {
+    this.busy = value;
+    this.transform.enabled = !value;
+    this.orbit.enabled = !value;
+    if (value) this.transform.detach();
+    else this.attachTool();
+  }
+  setTool(tool) {
+    this.tool = tool;
+    if (tool === "boundary")
+      this.boundaryGroup && (this.boundaryGroup.visible = true);
+    this.attachTool();
+    const hint = {
+      orbit: "DRAG TO ORBIT · SCROLL TO ZOOM",
+      move: "CLICK A BALLOON · DRAG IT OR ITS AXIS ARROWS · EMPTY SPACE ORBITS",
+      scale: "CLICK A BALLOON · DRAG A SCALE HANDLE · RELEASE TO CHECK FIT",
+      boundary: "DRAG A ROTATION RING · RELEASE TO REGENERATE BALLOONS",
+      curve: "DRAG A CURVE POINT · AXIS ARROWS CONTROL X / Y / Z",
+    };
+    document.getElementById("canvasHint").textContent = hint[tool];
+    document
+      .querySelectorAll("[data-canvas-tool]")
+      .forEach((b) =>
+        b.setAttribute("aria-pressed", b.dataset.canvasTool === tool),
+      );
+  }
+  attachTool() {
+    if (this.busy || this.directDrag || this.transform.dragging) return;
+    this.transform.detach();
+    this.target = null;
+    if (this.result) return;
+    let anchor, mode;
+    if (this.tool === "boundary" && this.box) {
+      anchor = this.box.center;
+      mode = "rotate";
+      this.target = { type: "boundary" };
+    } else if (this.tool === "curve" && this.editCurve && this.points?.length) {
+      anchor = this.points[this.selectedCurve] || this.points[0];
+      mode = "translate";
+      this.target = { type: "curve", index: this.selectedCurve };
+    } else if (
+      ["move", "scale"].includes(this.tool) &&
+      this.meshes[this.selected]
+    ) {
+      const c = this.data.centers[this.selected],
+        edit = this.data.edits[this.selected];
+      anchor = c.map((v, k) => v + edit[k]);
+      mode = this.tool === "scale" ? "scale" : "translate";
+      this.target = { type: "balloon", index: this.selected };
+    }
+    if (!anchor) return;
+    this.anchor = new T.Vector3(...anchor);
+    this.proxy.position.copy(this.anchor);
+    this.proxy.quaternion.identity();
+    this.proxy.scale.setScalar(1);
+    this.proxy.updateMatrixWorld();
+    this.transform.setMode(mode);
+    this.transform.setSpace("world");
+    this.transform.attach(this.proxy);
+    document.getElementById("selectionInfo").textContent =
+      this.target.type === "balloon"
+        ? `BALLOON ${String(this.selected + 1).padStart(2, "0")} SELECTED`
+        : this.target.type === "curve"
+          ? `CURVE POINT ${this.selectedCurve + 1} SELECTED`
+          : "BOUNDARY ROTATION";
+  }
+  beginTransform() {
+    if (!this.target) return;
+    this.activeTarget = { ...this.target };
+    this.startAnchor = this.anchor.clone();
+    this.changed = false;
+    this.orbit.autoRotate = false;
+    document.getElementById("rotateBtn").setAttribute("aria-pressed", "false");
+  }
+  previewTransform() {
+    if (!this.activeTarget || !this.startAnchor) return;
+    const target = this.activeTarget;
+    const matrix = new T.Matrix4()
+      .compose(
+        this.proxy.position,
+        this.proxy.quaternion,
+        new T.Vector3().setScalar(this.previewRatio()),
+      )
+      .multiply(
+        new T.Matrix4().makeTranslation(
+          ...this.startAnchor.clone().negate().toArray(),
+        ),
+      );
+    this.changed = this.changed || !matrix.equals(new T.Matrix4());
+    if (target.type === "curve") {
+      this.points[target.index] = this.proxy.position.toArray();
+      this.onCurve(
+        this.points.map((p) => p.slice()),
+        target.index,
+      );
+    } else {
+      const object =
+        target.type === "boundary"
+          ? this.boundaryGroup
+          : this.meshes[target.index];
+      if (object) {
+        object.matrixAutoUpdate = false;
+        object.matrix.copy(matrix);
+        object.matrixWorldNeedsUpdate = true;
+      }
+    }
+  }
+  previewRatio() {
+    const previous =
+      this.activeTarget?.type === "balloon"
+        ? this.data.edits[this.activeTarget.index][3]
+        : 1;
+    return Math.max(
+      0.1 / previous,
+      Math.min(3 / previous, uniformFactor(this.proxy.scale.toArray())),
+    );
+  }
+  finishTransform() {
+    if (!this.activeTarget) return;
+    const target = this.activeTarget,
+      delta = this.proxy.position.clone().sub(this.startAnchor).toArray(),
+      ratio = this.previewRatio(),
+      matrix = new T.Matrix4()
+        .compose(
+          this.proxy.position,
+          this.proxy.quaternion,
+          new T.Vector3().setScalar(ratio),
+        )
+        .multiply(
+          new T.Matrix4().makeTranslation(
+            ...this.startAnchor.clone().negate().toArray(),
+          ),
+        );
+    const changed = this.changed;
+    this.activeTarget = null;
+    this.startAnchor = null;
+    if (changed)
+      this.onTransform({ ...target, delta, ratio, matrix: matrix.toArray() });
+  }
+  pointerDown(e, i) {
+    if (this.busy || e.button !== 0) return;
+    this.down = [e.clientX, e.clientY];
+    if (i === 0 && this.transform.object && this.transform.enabled) {
+      this.setRay(e, i);
+      // Refresh hover for touch and a first click with no preceding mousemove.
+      this.transform.pointerHover({
+        x: this.pointer.x,
+        y: this.pointer.y,
+        button: 0,
+      });
+      if (this.transform.axis) {
+        this.orbit.enabled = false;
+        return;
+      }
+    }
+    let target;
+    if (this.editCurve) {
+      const hit = this.hit(e, i, this.handles || [])[0];
+      if (hit) {
+        this.selectedCurve = hit.object.userData.index;
+        this.tool = "curve";
+        this.attachTool();
+        this.setTool("curve");
+        target = { type: "curve", index: this.selectedCurve };
+        document.getElementById("curvePoint").value = this.selectedCurve;
+        this.onCurve(
+          this.points.map((p) => p.slice()),
+          this.selectedCurve,
+        );
+      }
+    }
+    if (!target && this.tool !== "boundary") {
+      const hit = this.hit(
+        e,
+        i,
+        this.meshes.filter((m) => m.visible),
+      )[0];
+      if (hit) {
+        this.onSelect(hit.object.userData.index);
+        if (this.tool === "move")
+          target = { type: "balloon", index: this.selected };
+      }
+    }
+    if (!target) return;
+    this.beginTransform();
+    const camera = i ? this.plan : this.perspective,
+      normal = i
+        ? new T.Vector3(0, 0, 1)
+        : camera.getWorldDirection(new T.Vector3());
+    const plane = new T.Plane().setFromNormalAndCoplanarPoint(
+        normal,
+        this.proxy.position,
+      ),
+      start = new T.Vector3();
+    this.setRay(e, i);
+    if (!this.ray.ray.intersectPlane(plane, start)) return;
+    this.directDrag = {
+      plane,
+      start,
+      anchor: this.proxy.position.clone(),
+      pointerId: e.pointerId,
+      view: i,
+    };
+    this.orbit.enabled = false;
+    rCapture(this.renderers[i].domElement, e.pointerId);
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
+  pointerMove(e, i) {
+    const d = this.directDrag;
+    if (!d || d.view !== i) return;
+    this.setRay(e, i);
+    const p = new T.Vector3();
+    if (!this.ray.ray.intersectPlane(d.plane, p)) return;
+    this.proxy.position.copy(d.anchor).add(p.sub(d.start));
+    this.proxy.updateMatrixWorld();
+    this.previewTransform();
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }
+  pointerUp(e, i) {
+    if (this.directDrag?.view === i) {
+      this.directDrag = null;
+      this.finishTransform();
+      this.orbit.enabled = !this.busy;
+      this.attachTool();
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return;
+    }
+    if (i === 0 && this.transform.dragging) return;
+    if (
+      this.down &&
+      Math.hypot(e.clientX - this.down[0], e.clientY - this.down[1]) < 5 &&
+      this.tool !== "boundary" &&
+      !this.busy
+    ) {
+      const hit = this.hit(
+        e,
+        i,
+        this.meshes.filter((m) => m.visible),
+      )[0];
+      if (hit) this.onSelect(hit.object.userData.index);
+    }
+    this.orbit.enabled = !this.busy;
+  }
+  cancelDrag(e, i) {
+    if (this.directDrag?.view !== i) return;
+    this.directDrag = null;
+    this.activeTarget = null;
+    this.orbit.enabled = !this.busy;
+    this.onTransform({ type: "cancel" });
   }
   setRay(e, i) {
     const rect = this.renderers[i].domElement.getBoundingClientRect();
@@ -147,6 +413,9 @@ export class StudioView {
     }
   }
   show(data, fit = false) {
+    this.transform.detach();
+    this.data = data;
+    this.result = null;
     this.disposeGroup(this.field);
     this.meshes = [];
     const raw = data.boundary,
@@ -250,8 +519,13 @@ export class StudioView {
       m.material.emissive.setHex(i === index ? 0x083d42 : 0x000000);
       m.material.emissiveIntensity = i === index ? 0.8 : 0;
     });
+    this.attachTool();
   }
   curve(points, editing, visible) {
+    this.selectedCurve = Math.max(
+      0,
+      Math.min(this.selectedCurve, points.length - 1),
+    );
     this.points = points.map((p) => p.slice());
     this.editCurve = editing;
     this.disposeGroup(this.curveGroup);
@@ -290,6 +564,7 @@ export class StudioView {
         this.handles.push(handle);
         this.curveGroup.add(handle);
       });
+    this.attachTool();
   }
   samples(points) {
     return new T.CatmullRomCurve3(
@@ -301,6 +576,7 @@ export class StudioView {
       .map((p) => p.toArray());
   }
   output(raw) {
+    if (raw) this.transform.detach();
     if (this.result) {
       this.field.remove(this.result);
       this.result.geometry.dispose();
@@ -324,12 +600,21 @@ export class StudioView {
       this.meshes.forEach((m) => (m.visible = true));
       this.boundaryGroup.visible =
         document.getElementById("showBoundary").checked;
+      this.attachTool();
     }
   }
   animate() {
     requestAnimationFrame(() => this.animate());
     this.orbit.update();
     this.renderers[0].render(this.scene, this.perspective);
+    const visible = this.transformHelper.visible;
+    this.transformHelper.visible = false;
     this.renderers[1].render(this.scene, this.plan);
+    this.transformHelper.visible = visible;
   }
+}
+function rCapture(canvas, id) {
+  try {
+    canvas.setPointerCapture(id);
+  } catch {}
 }

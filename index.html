@@ -40,13 +40,35 @@
               ><button id="wireBtn" aria-pressed="false">WIRE</button>
             </div>
           </div>
+          <div
+            class="canvas-tools"
+            role="toolbar"
+            aria-label="Canvas editing tools"
+          >
+            <button data-canvas-tool="orbit" aria-pressed="false">ORBIT</button>
+            <button data-canvas-tool="boundary" aria-pressed="false">
+              ROTATE BOUNDARY
+            </button>
+            <button data-canvas-tool="move" aria-pressed="true">
+              MOVE BALLOON
+            </button>
+            <button data-canvas-tool="scale" aria-pressed="false">
+              SCALE BALLOON
+            </button>
+            <button data-canvas-tool="curve" aria-pressed="false">
+              CURVE POINTS
+            </button>
+            <span id="selectionInfo" aria-live="polite"
+              >CLICK A BALLOON TO SELECT</span
+            >
+          </div>
           <div id="viewport">
             <div class="viewport-label">
               BALLOON FIELD <span id="fieldLabel">DEMO / CLOSED CONTAINER</span>
             </div>
             <div class="axis-key">Z ↑<br />Y ↗<br />X →</div>
-            <div class="view-hint">
-              DRAG TO ORBIT · SCROLL TO ZOOM · CLICK TO SELECT
+            <div class="view-hint" id="canvasHint">
+              CLICK A BALLOON · DRAG IT OR ITS AXIS ARROWS · EMPTY SPACE ORBITS
             </div>
           </div>
           <div class="viewer-footer">
@@ -63,7 +85,9 @@
               </button>
             </div>
             <div id="planViewport"></div>
-            <p class="plan-hint">Edit curve: drag cyan handles in plan.</p>
+            <p class="plan-hint">
+              Drag balloons or curve points in XY. 3D view adds Z handles.
+            </p>
           </section>
           <section class="controls panel">
             <div class="panel-heading">
@@ -93,6 +117,11 @@
                   <p class="note">
                     Import one closed mesh. Rhino: Mesh → Export Selected →
                     .3dm. Radii and dimensions use your model units.
+                  </p>
+                  <p class="note">
+                    Use ROTATE BOUNDARY on the canvas, then drag a rotation
+                    ring. On release the field regenerates in the rotated mesh,
+                    replacing individual edits.
                   </p>
                   <label class="check"
                     ><input id="showBoundary" type="checkbox" checked /> Show
@@ -376,18 +405,27 @@
         </li>
         <li>Set count, seeds, and radius range. Generate balloons.</li>
         <li>
-          Enable pressure. Drag curve handles in plan or enter XYZ coordinates,
-          then apply pressure.
+          Choose CURVE POINTS. Click and drag a point in either canvas, or use
+          its X/Y/Z arrows in 3D. Pressure updates when you release the point.
         </li>
         <li>
-          Click a balloon in either view. Adjust its position and scale, then
-          apply or reset.
+          Choose MOVE BALLOON and drag any balloon directly, or use its axis
+          arrows. SCALE BALLOON provides uniform scale handles. On release,
+          edits are limited to safe positions inside the wall and away from
+          neighbors.
         </li>
         <li>
           Build shell assembly or Boolean subtraction, then export. Save a
           project to preserve geometry and settings.
         </li>
       </ol>
+      <p>
+        ROTATE BOUNDARY rotates the actual imported mesh around its center. Drag
+        a ring in the 3D view; releasing regenerates the balloon field and
+        resets individual edits. Curve-point drags also regenerate the field and
+        reset individual edits. Use ORBIT, or drag empty space, to change only
+        the camera.
+      </p>
       <p>
         This is geometric form finding, not a physical material simulation.
         Solid intersections and separating contact planes prevent overlapping

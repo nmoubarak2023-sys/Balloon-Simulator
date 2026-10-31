@@ -551,3 +551,49 @@ dialog li {
     letter-spacing: -1px;
   }
 }
+.canvas-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #081114;
+}
+.canvas-tools button {
+  font-size: 8px;
+  padding: 8px;
+  min-height: 30px;
+}
+.canvas-tools span {
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: var(--cyan);
+  margin-left: auto;
+  padding: 4px;
+}
+#viewport canvas {
+  cursor: grab;
+}
+#viewport canvas:active {
+  cursor: grabbing;
+}
+.view-hint {
+  max-width: calc(100% - 80px);
+  line-height: 1.6;
+}
+@media (max-width: 1000px) {
+  .canvas-tools span {
+    width: 100%;
+    margin: 0;
+  }
+}
+@media (max-width: 720px) {
+  .canvas-tools {
+    gap: 4px;
+  }
+  .canvas-tools button {
+    flex: 1;
+    min-width: 85px;
+  }
+}
