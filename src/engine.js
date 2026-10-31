@@ -363,8 +363,18 @@ export class BalloonEngine {
       .scale(edit[3])
       .translate(c.map((x, k) => x + edit[k]));
   }
-  safe(i, s) {
-    const threshold = Math.max(1e-9, s.volume() * 1e-9);
+  allowedVolumeError(s, positionError = 0) {
+    const volumeOfBalloon = s.volume();
+    return Math.max(
+      1e-9,
+      volumeOfBalloon * 1e-9,
+      positionError > 0
+        ? Math.min(s.surfaceArea() * positionError, volumeOfBalloon * 1e-6)
+        : 0,
+    );
+  }
+  safe(i, s, positionError = 0) {
+    const threshold = this.allowedVolumeError(s, positionError);
     let cut = s.subtract(this.boundary),
       outside = cut.volume();
     cut.delete();

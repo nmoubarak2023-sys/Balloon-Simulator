@@ -24,6 +24,8 @@ Popped source members remain removed through regeneration. Count describes the s
 
 Version 2 project JSON saves actual current and baseline geometry, merged membership, frozen flags, popped members, and pop influence history. Version 1 files remain readable. Mesh exports use the active shapes, including merged bodies and excluding popped balloons. Pop pressure is geometric form finding, not a physical transient-pressure calculation; maximum strength expands the removed influence shape by 25% before subtracting its overlap from unfrozen neighbors.
 
+Internal Pop/Freeze/Merge transactions copy native solids directly instead of rebuilding from Float32 display meshes. Frozen solids are also copied natively during regeneration. Saved-file validation accounts for a small coordinate-rounding skin, with the extra permitted intersection volume capped at one part per million of balloon volume; meaningful boundary crossings and overlaps still fail. Merge contact patches include projected points on both surfaces, so different mesh tessellations do not produce a connector on only one side.
+
 Canvas tests exercise real raycasting and pointer handlers through a small DOM adapter, plus the geometric solver. Live browser QA could not be completed for this update because the browser connection is unavailable.
 
 All modeling happens locally in the browser. Uploaded models are not sent to a server. Imports are limited to 50 MB and 300,000 boundary triangles; counts to 40 balloons. High quality uses 80 circular segments, with 128 available. Model coordinates are preserved; Rhino exports should be imported using the original model units.

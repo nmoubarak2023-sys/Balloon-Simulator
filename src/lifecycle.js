@@ -5,6 +5,15 @@ function center(raw) {
   const box = new T.Box3().setFromArray(raw.positions);
   return box.getCenter(new T.Vector3()).toArray();
 }
+function quantizationError(raw) {
+  const box = new T.Box3().setFromArray(raw.positions),
+    span = box.getSize(new T.Vector3()).length(),
+    magnitude = Math.max(
+      ...box.min.toArray().map(Math.abs),
+      ...box.max.toArray().map(Math.abs),
+    );
+  return Math.max(1e-12, Math.min(magnitude * 2 ** -23, span * 2 ** -20));
+}
 function geo(raw) {
   const g = new T.BufferGeometry();
   g.setAttribute(
@@ -30,6 +39,8 @@ function contactBridge(engine, a, b, maxGap) {
     pa = {},
     pb = {};
   try {
+    ga.boundsTree = ta;
+    gb.boundsTree = tb;
     ta.closestPointToGeometry(gb, new T.Matrix4(), pa, pb);
     if (!pa.point || !pb.point || pa.distance > maxGap)
       throw Error(
@@ -47,10 +58,30 @@ function contactBridge(engine, a, b, maxGap) {
       for (let k = 0; k < raw.positions.length; k += 3) {
         const p = new T.Vector3().fromArray(raw.positions, k),
           near = tree.closestPointToPoint(p, {}, 0, reach);
-        if (near && near.distance <= reach) points.push(p.toArray());
+        if (near && near.distance <= reach)
+          points.push(p.toArray(), near.point.toArray());
       }
     if (points.length >= 4) {
-      const hull = engine.m.Manifold.hull(points);
+      // Include each nearby vertex AND its projection onto the opposite surface:
+      // unequal tessellation can otherwise produce a patch on only one body.
+      const axis = pb.point.clone().sub(pa.point).normalize(),
+        magnitude = Math.max(
+          ...pa.point.toArray().map(Math.abs),
+          ...pb.point.toArray().map(Math.abs),
+        );
+      const padding = Math.min(
+        radius * 0.001,
+        Math.max(radius * 1e-6, magnitude * 2 ** -22),
+      );
+      const padded =
+        axis.lengthSq() > 0
+          ? points.flatMap((p) =>
+              [-1, 1].map((sign) =>
+                p.map((v, k) => v + sign * axis.getComponent(k) * padding),
+              ),
+            )
+          : points;
+      const hull = engine.m.Manifold.hull(padded);
       if (!hull.isEmpty() && hull.status() === "NoError") return hull;
       hull.delete();
     }
@@ -98,6 +129,28 @@ export const lifecycleMethods = {
       params: this.params,
       canAdjustPop: !!this.lastPop,
     };
+  },
+  fork() {
+    // Internal actions must preserve native precision, not re-import display meshes.
+    const next = new this.constructor(this.m);
+    try {
+      next.boundary = this.boundary.translate([0, 0, 0]);
+      next.rawBoundary = this.rawBoundary;
+      next.balloons = this.balloons.map((s) => s.translate([0, 0, 0]));
+      next.base = this.base.map((s) => s.translate([0, 0, 0]));
+      next.centers = this.centers.map((c) => c.slice());
+      next.edits = this.edits.map((e) => e.slice());
+      next.meta = this.meta.map((m) => ({ ...m, members: m.members.slice() }));
+      next.popped = this.popped.slice();
+      next.popEvents = this.popEvents.map((event) => ({ ...event }));
+      next.popStrength = this.popStrength;
+      next.params = { ...this.params };
+      next.lastPop = this.lastPop;
+      return next;
+    } catch (err) {
+      next.clear();
+      throw err;
+    }
   },
   loadSession(state) {
     if (
@@ -169,10 +222,12 @@ export const lifecycleMethods = {
       )
     )
       throw Error("Invalid saved pop state.");
+    // JSON/display coordinates are Float32. Permit only a bounded quantization skin.
+    const positionError = quantizationError(state.boundary);
     for (let i = 0; i < this.balloons.length; i++)
-      if (!this.safe(i, this.balloons[i]))
+      if (!this.safe(i, this.balloons[i], positionError))
         throw Error(
-          "Saved balloon state crosses the boundary or overlaps another balloon.",
+          `Saved balloon ${i + 1} has a boundary crossing or overlap larger than the mesh rounding tolerance.`,
         );
     return this.snapshot();
   },
@@ -366,7 +421,7 @@ export const lifecycleMethods = {
       message: `Merged ${indices.length} balloons into one connected volume. Internal contact surfaces removed.`,
     };
   },
-  adoptLifecycle(previous) {
+  adoptLifecycle(previous, sourceEngine) {
     if (!previous?.meta?.length && !previous?.popped?.length)
       return this.snapshot();
     this.popped = [...(previous.popped || [])];
@@ -397,8 +452,16 @@ export const lifecycleMethods = {
       }
     }
     for (const { meta, i } of frozen) {
-      this.balloons.push(this.toSolid(previous.balloons[i]));
-      this.base.push(this.toSolid(previous.base[i]));
+      this.balloons.push(
+        sourceEngine
+          ? sourceEngine.balloons[i].translate([0, 0, 0])
+          : this.toSolid(previous.balloons[i]),
+      );
+      this.base.push(
+        sourceEngine
+          ? sourceEngine.base[i].translate([0, 0, 0])
+          : this.toSolid(previous.base[i]),
+      );
       this.centers.push(previous.centers[i].slice());
       this.edits.push(previous.edits[i].slice());
       this.meta.push({ ...meta, members: meta.members.slice() });
@@ -411,7 +474,13 @@ export const lifecycleMethods = {
       const outside = this.balloons[i].subtract(this.boundary),
         v = outside.volume();
       outside.delete();
-      if (v > Math.max(1e-9, this.balloons[i].volume() * 1e-9))
+      if (
+        v >
+        this.allowedVolumeError(
+          this.balloons[i],
+          quantizationError(this.rawBoundary),
+        )
+      )
         throw Error(
           "The changed boundary would exclude a frozen balloon. Unfreeze it first.",
         );

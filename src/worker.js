@@ -26,7 +26,7 @@ self.onmessage = async ({ data }) => {
                   (value, text) => postMessage({ id, progress: value, text }),
                 );
         if (action === "generate" && data.preserve !== false && engine.boundary)
-          result = next.adoptLifecycle(engine.session());
+          result = next.adoptLifecycle(engine.session(), engine);
       } catch (err) {
         next.clear();
         throw err;
@@ -34,10 +34,8 @@ self.onmessage = async ({ data }) => {
       engine.clear();
       engine = next;
     } else if (["pop", "freeze", "merge", "popPressure"].includes(action)) {
-      const next = new BalloonEngine(engine.m);
+      const next = engine.fork();
       try {
-        next.loadSession(engine.session());
-        next.lastPop = engine.lastPop;
         result =
           action === "pop"
             ? next.pop(data.index, data.strength)
