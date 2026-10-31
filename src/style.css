@@ -946,3 +946,6 @@ footer {
     height: 266px;
   }
 }
+.note.mesh-warning {
+  color: #efb689;
+}

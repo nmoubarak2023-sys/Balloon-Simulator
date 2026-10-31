@@ -43,6 +43,33 @@ test("sampling is deterministic and strictly inside volume", () => {
   s.dispose();
   e.clear();
 });
+test("non-watertight Boolean output can be written to Rhino with explicit warnings", async () => {
+  const { e, raw } = fixture();
+  e.generate(raw, { ...params, count: 2, quality: 48 }, []);
+  // Reproduce an open serialized result without weakening the solid kernel.
+  const original = e.raw.bind(e);
+  e.raw = (s) => {
+    const result = original(s);
+    return { ...result, indices: result.indices.slice(3) };
+  };
+  const output = e.output("boolean", 0.0001);
+  assert.equal(output.incomplete, true);
+  assert.equal(output.checks.closed, false);
+  assert.match(output.message, /Export is allowed/);
+  assert.equal(output.shells.length, 1);
+  const r = await initRhino(),
+    doc = new r.File3dm();
+  addRhinoMesh(r, doc, output.shells[0], "Incomplete Boolean");
+  const reopened = r.File3dm.fromByteArray(doc.toByteArray()),
+    obj = reopened.objects().get(0),
+    mesh = obj.geometry();
+  assert.equal(topology(rhinoRaw(mesh)).closed, false);
+  mesh.delete();
+  obj.delete();
+  reopened.delete();
+  doc.delete();
+  e.clear();
+});
 test("open boundary rejected", () => {
   const { e, raw } = fixture();
   assert.throws(

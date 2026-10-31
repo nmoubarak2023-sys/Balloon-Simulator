@@ -475,16 +475,14 @@ export class BalloonEngine {
       }
       this.assert(result, "Boolean");
       const raw = this.raw(result),
-        checks = topology(raw);
-      if (!checks.valid || !checks.closed || !checks.manifold)
-        throw Error(
-          "Boolean incomplete—not a watertight solid. Separate shells remain available.",
-        );
+        checks = topology(raw),
+        incomplete = !checks.valid || !checks.closed || !checks.manifold;
       return {
         mode,
         shells: [raw],
         checks,
-        message: "Boolean complete · Valid: yes · Closed: yes · Manifold: yes",
+        incomplete,
+        message: `${incomplete ? "Boolean available for export with warnings" : "Boolean complete"} · Valid: ${checks.valid ? "yes" : "no"} · Closed: ${checks.closed ? "yes" : "no"} · Manifold: ${checks.manifold ? "yes" : "no"}${incomplete ? ". Export is allowed. The mesh may need repair in Rhino; separate input shells are preserved." : ""}`,
       };
     } finally {
       result.delete();

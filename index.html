@@ -459,7 +459,9 @@
       <p>
         Shell assembly preserves separate shells in one mesh. It is not a union
         or a single solid. Boolean output is checked for valid, closed, manifold
-        topology. Models are processed locally.
+        topology. Failed checks show warnings but do not block mesh export when
+        a Boolean result exists. Exporting does not repair the mesh. Models are
+        processed locally.
       </p>
       <p>
         Helvetica Neue LT Pro is used when installed, with Helvetica Neue,

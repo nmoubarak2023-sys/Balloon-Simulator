@@ -143,6 +143,7 @@ function invalidate() {
   if (view.field.children.length) view.output(null);
   $("outputStatus").textContent =
     "Output needs rebuilding after geometry changes. Separate input shells remain available.";
+  $("outputStatus").classList.remove("mesh-warning");
 }
 function syncDisplay(result, fit = false) {
   display = result;
@@ -609,8 +610,9 @@ $("outputBtn").onclick = () =>
       });
     output = { ...r, tolerance: p.tolerance };
     $("outputStatus").textContent = r.message;
+    $("outputStatus").classList.toggle("mesh-warning", !!r.incomplete);
     view.output(r.mode === "boolean" ? r.shells[0] : null);
-    status(r.message);
+    status(r.message, !!r.incomplete);
   });
 $("outputMode").onchange = () => {
   invalidate();
@@ -658,7 +660,9 @@ $("export3dm").onclick = () =>
     );
     doc.delete();
     status(
-      "Rhino mesh exported. Use your original model units when importing.",
+      o.incomplete
+        ? "Rhino mesh exported with geometry warnings. See the output checks; the mesh has not been repaired."
+        : "Rhino mesh exported. Use your original model units when importing.",
     );
   });
 $("saveProject").onclick = () =>
