@@ -287,8 +287,10 @@ export const lifecycleMethods = {
     try {
       for (let i = 0; i < this.balloons.length; i++) {
         if (this.meta[i].frozen) continue;
-        const before = this.balloons[i].volume(),
-          s = this.balloons[i].subtract(cut);
+        const rest = this.candidate(i, this.edits[i]),
+          before = rest.volume(),
+          s = rest.subtract(cut);
+        rest.delete();
         if (s.isEmpty() || s.status() !== "NoError") {
           s.delete();
           throw Error(
@@ -323,6 +325,7 @@ export const lifecycleMethods = {
     this.popped = [...new Set([...this.popped, ...members])];
     const event = { source, strength };
     const affected = this.applyPopEvent(event);
+    this.refreshContacts();
     this.popEvents.push(event);
     this.popStrength = strength;
     this.lastPop = { before, id };
@@ -417,6 +420,7 @@ export const lifecycleMethods = {
     this.replaceEntity(keep, merged);
     this.meta[keep] = { id, members, frozen: false };
     for (const i of indices.slice(1).reverse()) this.removeEntity(i);
+    this.refreshContacts();
     this.lastPop = null;
     return {
       ...this.snapshot(),

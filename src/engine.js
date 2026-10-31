@@ -397,24 +397,31 @@ export class BalloonEngine {
       return false;
     for (let j = 0; j < this.balloons.length; j++)
       if (j !== i) {
-        part = s.intersect(this.balloons[j]);
-        const overlap = part.volume();
-        part.delete();
-        if (overlap <= this.allowedVolumeError(this.balloons[j])) continue;
-        if (this.meta[j].frozen) return false;
-        part = this.balloons[j].subtract(s);
-        const ok =
-          part.status() === "NoError" &&
-          !part.isEmpty() &&
-          part.volume() >= this.balloons[j].volume() * 0.02;
-        let connected = false;
-        if (ok) {
-          const pieces = part.decompose();
-          connected = pieces.length === 1;
-          pieces.forEach((piece) => piece.delete());
+        const rest = this.meta[j].frozen
+          ? this.balloons[j].translate([0, 0, 0])
+          : this.candidate(j, this.edits[j]);
+        try {
+          part = s.intersect(rest);
+          const overlap = part.volume();
+          part.delete();
+          if (overlap <= this.allowedVolumeError(rest)) continue;
+          if (this.meta[j].frozen) return false;
+          part = rest.subtract(s);
+          const ok =
+            part.status() === "NoError" &&
+            !part.isEmpty() &&
+            part.volume() >= rest.volume() * 0.02;
+          let connected = false;
+          if (ok) {
+            const pieces = part.decompose();
+            connected = pieces.length === 1;
+            pieces.forEach((piece) => piece.delete());
+          }
+          part.delete();
+          if (!ok || !connected) return false;
+        } finally {
+          rest.delete();
         }
-        part.delete();
-        if (!ok || !connected) return false;
       }
     return true;
   }
@@ -468,21 +475,67 @@ export class BalloonEngine {
       candidate.delete();
       throw Error("Edit could not be verified; previous balloon preserved.");
     }
-    let deformedNeighbors = 0;
-    for (let j = 0; j < this.balloons.length; j++)
-      if (j !== i && !this.meta[j].frozen) {
-        const contact = this.balloons[j].intersect(candidate),
-          volume = contact.volume();
-        contact.delete();
-        if (volume > this.allowedVolumeError(this.balloons[j])) {
-          this.replaceEntity(j, this.balloons[j].subtract(candidate));
-          deformedNeighbors++;
-        }
-      }
     this.balloons[i].delete();
     this.balloons[i] = candidate;
     this.edits[i] = accepted;
+    this.meta[i].contactPriority =
+      1 + Math.max(0, ...this.meta.map((m) => m.contactPriority || 0));
+    const deformedNeighbors = this.refreshContacts();
     return { ...this.snapshot(), clamped, deformedNeighbors };
+  }
+  refreshContacts() {
+    // Rebuild temporary contact dents from the edited rest shapes, never from
+    // yesterday's dented display meshes. Frozen shapes remain exact obstacles.
+    const order = this.balloons
+      .map((_, i) => i)
+      .sort(
+        (a, b) =>
+          Number(this.meta[b].frozen) - Number(this.meta[a].frozen) ||
+          (this.meta[b].contactPriority || 0) -
+            (this.meta[a].contactPriority || 0) ||
+          a - b,
+      );
+    const next = new Map();
+    let deformed = 0;
+    try {
+      for (const i of order) {
+        let solid = this.meta[i].frozen
+          ? this.balloons[i].translate([0, 0, 0])
+          : this.candidate(i, this.edits[i]);
+        next.set(i, solid);
+        if (this.meta[i].frozen) continue;
+        const volume = solid.volume();
+        for (const [j, obstacle] of next) {
+          if (j === i) continue;
+          const contact = solid.intersect(obstacle);
+          const overlap = contact.volume();
+          contact.delete();
+          if (overlap <= this.allowedVolumeError(solid)) continue;
+          const cut = solid.subtract(obstacle);
+          solid.delete();
+          solid = cut;
+          next.set(i, solid);
+        }
+        this.assert(solid, "Contact deformation");
+        const parts = solid.decompose();
+        const connected = parts.length === 1;
+        parts.forEach((p) => p.delete());
+        if (!connected || solid.volume() < volume * 0.02)
+          throw Error(
+            "This movement leaves too little connected space for a neighboring balloon.",
+          );
+        if (volume - solid.volume() > this.allowedVolumeError(solid))
+          deformed++;
+      }
+      for (const [i, solid] of next) {
+        this.balloons[i].delete();
+        this.balloons[i] = solid;
+      }
+      next.clear();
+      return deformed;
+    } finally {
+      for (const solid of next.values()) solid.delete();
+    }
   }
   restore(raw, params, curve, edits) {
     this.generate(raw, params, curve);

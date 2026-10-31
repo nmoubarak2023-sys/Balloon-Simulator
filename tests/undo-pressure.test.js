@@ -65,6 +65,48 @@ test("frozen neighbors remain unchanged and can still limit a movement", () => {
   for (let i = 0; i < 3; i++) assert(e.safe(i, e.balloons[i]));
   e.clear();
 });
+
+test("contact dents recover on retreat without changing rest shapes or independent edits", () => {
+  const e = fixture();
+  e.edit(1, [0, 1, 0, 1]);
+  const original = e.raw(e.balloons[1]);
+  const base = e.raw(e.base[1]);
+  for (let cycle = 0; cycle < 3; cycle++) {
+    e.edit(0, [8, 0, 0, 1]);
+    assert(e.balloons[1].volume() < 4000);
+    assert.deepEqual(e.raw(e.base[1]), base);
+    e.edit(0, [0, 0, 0, 1]);
+    assert.deepEqual(e.raw(e.balloons[1]), original);
+    assert.deepEqual(e.edits[1], [0, 1, 0, 1]);
+    for (let i = 0; i < 3; i++) assert(e.safe(i, e.balloons[i]));
+  }
+  e.clear();
+});
+
+test("saved contact dents recover after reload and frozen dents stay locked", () => {
+  const e = fixture();
+  const volume = e.balloons[1].volume();
+  e.edit(0, [8, 0, 0, 1]);
+  const loaded = new BalloonEngine(m);
+  loaded.loadSession(e.session());
+  loaded.edit(0, [0, 0, 0, 1]);
+  assert(Math.abs(loaded.balloons[1].volume() - volume) < volume * 1e-6);
+  loaded.clear();
+  e.freeze(1);
+  const frozen = e.raw(e.balloons[1]);
+  e.edit(0, [0, 0, 0, 1]);
+  assert.deepEqual(e.raw(e.balloons[1]), frozen);
+  e.clear();
+});
+
+test("popping a contact source releases its temporary dent at zero pop pressure", () => {
+  const e = fixture();
+  const original = e.raw(e.balloons[1]);
+  e.edit(0, [8, 0, 0, 1]);
+  e.pop(0, 0);
+  assert.deepEqual(e.raw(e.balloons[0]), original);
+  e.clear();
+});
 test("wall constraints and minimum neighbor volume prevent destructive movements", () => {
   const e = fixture(),
     v = e.balloons[1].volume(),
