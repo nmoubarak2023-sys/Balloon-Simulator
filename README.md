@@ -14,7 +14,17 @@ A browser-based geometric balloon design studio inspired by a supplied Grasshopp
 
 The interface uses a black background and responsive double-line cyan frames with tabbed upper edges and diagonal corners, following the supplied graphic reference. Introductory marketing copy has been removed.
 
-Canvas tests exercise real raycasting and pointer handlers through a small DOM adapter, plus the geometric solver. Live browser drag QA could not be completed for this update because the computer-use connection could not verify the browser URL.
+## Pop!, Freeze, and Merge
+
+- **Pop!** removes the active balloon. The pressure slider runs from 0–100% and defaults to 25%. It applies a local inward dent to unfrozen neighboring shapes, using the removed balloon as the influence shape. Zero removes only the selected balloon. Frozen neighbors are unchanged. The slider can adjust the most recent pop without accumulating successive deformation; another edit, freeze, merge, regeneration, cancellation, or project reload ends that live adjustment. If a requested pressure would eliminate a neighbor or split a merged volume, the operation is rejected and the preceding field is preserved.
+- **Freeze / Unfreeze** locks the active shape and world position. Direct move, scale, reset, pop, and merge are disabled until it is unfrozen. Frozen geometry survives curve changes and field regeneration, acting as an obstacle for newly generated unfrozen shapes. A boundary change that would exclude frozen geometry is rejected; the geometry is never silently moved or trimmed. Frozen balloons are tinted blue-gray.
+- **Merge** uses Shift/Ctrl-click or sidebar checkboxes to choose at least two unfrozen balloons. It forms a true solid Boolean union. Small contact gaps are bridged from nearby contact patches, clipped to the boundary, and trimmed against non-selected balloons. The resulting shape must be one connected component. Distant selections are rejected rather than connected by an arbitrary large hull. Merged shapes can subsequently be selected, moved, scaled, frozen, or popped as one entity. Regeneration retains group membership; if a new arrangement cannot connect a group, the previous field is preserved and an error explains the conflict.
+
+Popped source members remain removed through regeneration. Count describes the source seed field, so the active balloon count may be smaller after popping or merging. **RESET POP / FREEZE / MERGE** clears these states and generates a fresh field using the current container and controls. Importing a different boundary or using the demonstration reset also clears them. If all balloons are popped, the unchanged boundary remains exportable.
+
+Version 2 project JSON saves actual current and baseline geometry, merged membership, frozen flags, popped members, and pop influence history. Version 1 files remain readable. Mesh exports use the active shapes, including merged bodies and excluding popped balloons. Pop pressure is geometric form finding, not a physical transient-pressure calculation; maximum strength expands the removed influence shape by 25% before subtracting its overlap from unfrozen neighbors.
+
+Canvas tests exercise real raycasting and pointer handlers through a small DOM adapter, plus the geometric solver. Live browser QA could not be completed for this update because the browser connection is unavailable.
 
 All modeling happens locally in the browser. Uploaded models are not sent to a server. Imports are limited to 50 MB and 300,000 boundary triangles; counts to 40 balloons. High quality uses 80 circular segments, with 128 available. Model coordinates are preserved; Rhino exports should be imported using the original model units.
 

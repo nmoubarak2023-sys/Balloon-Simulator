@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { MeshBVH } from "three-mesh-bvh";
+import { lifecycleMethods } from "./lifecycle.js";
 
 export function random(seed) {
   let a = seed >>> 0;
@@ -352,6 +353,7 @@ export class BalloonEngine {
     this.balloons = made.map((s) => s.translate([0, 0, 0]));
     this.centers = centers;
     this.edits = made.map(() => [0, 0, 0, 1]);
+    this.initLifecycle(p);
     return this.snapshot();
   }
   candidate(i, edit) {
@@ -377,6 +379,8 @@ export class BalloonEngine {
     return s.status() === "NoError" && !s.isEmpty();
   }
   edit(i, requested) {
+    this.requireEditable(i);
+    this.lastPop = null;
     if (
       !this.base[i] ||
       requested.some((x) => !Number.isFinite(x)) ||
@@ -450,16 +454,11 @@ export class BalloonEngine {
     return this.snapshot();
   }
   snapshot() {
-    return {
-      boundary: this.rawBoundary,
-      balloons: this.balloons.map((s) => this.raw(s)),
-      edits: this.edits,
-      centers: this.centers,
-    };
+    return this.session();
   }
   output(mode, tolerance) {
-    if (!this.balloons.length)
-      throw Error("Generate balloons before building an output.");
+    if (!this.boundary)
+      throw Error("Generate a field before building an output.");
     if (mode === "shell")
       return {
         mode,
@@ -489,3 +488,4 @@ export class BalloonEngine {
     }
   }
 }
+Object.assign(BalloonEngine.prototype, lifecycleMethods);

@@ -145,3 +145,40 @@ test("curve Z-axis manipulation changes the selected point, not its neighbor", (
     globalThis.document = old;
   }
 });
+test("Ctrl-click adds a selection once and does not start a drag", () => {
+  const old = globalThis.document;
+  try {
+    const v = setup("move"),
+      calls = [];
+    v.onSelect = (i, add) => {
+      calls.push([i, add]);
+      v.select(i);
+    };
+    const e = { ...event(400, 300), ctrlKey: true };
+    v.pointerDown(e, 0);
+    v.pointerUp(e, 0);
+    assert.deepEqual(calls, [[0, true]]);
+    assert.equal(v.directDrag, undefined);
+    assert.equal(v.commit, undefined);
+  } finally {
+    globalThis.document = old;
+  }
+});
+test("clicking a frozen balloon selects it without a transform handle or drag", () => {
+  const old = globalThis.document;
+  try {
+    const v = setup("move");
+    v.data.meta = [{ id: "b0", members: [0], frozen: true }];
+    v.attachTool();
+    const e = event(400, 300);
+    v.pointerDown(e, 0);
+    v.pointerMove(event(440, 300), 0);
+    v.pointerUp(event(440, 300), 0);
+    assert.equal(v.selected, 0);
+    assert.equal(v.transform.object, null);
+    assert.equal(v.directDrag, undefined);
+    assert.equal(v.commit, undefined);
+  } finally {
+    globalThis.document = old;
+  }
+});

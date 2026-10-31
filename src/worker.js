@@ -15,14 +15,37 @@ self.onmessage = async ({ data }) => {
       const next = new BalloonEngine(engine.m);
       try {
         result =
-          action === "restore"
-            ? next.restore(data.boundary, data.params, data.curve, data.edits)
-            : next.generate(
-                data.boundary,
-                data.params,
-                data.curve,
-                (value, text) => postMessage({ id, progress: value, text }),
-              );
+          action === "restore" && data.session
+            ? next.loadSession(data.session)
+            : action === "restore"
+              ? next.restore(data.boundary, data.params, data.curve, data.edits)
+              : next.generate(
+                  data.boundary,
+                  data.params,
+                  data.curve,
+                  (value, text) => postMessage({ id, progress: value, text }),
+                );
+        if (action === "generate" && data.preserve !== false && engine.boundary)
+          result = next.adoptLifecycle(engine.session());
+      } catch (err) {
+        next.clear();
+        throw err;
+      }
+      engine.clear();
+      engine = next;
+    } else if (["pop", "freeze", "merge", "popPressure"].includes(action)) {
+      const next = new BalloonEngine(engine.m);
+      try {
+        next.loadSession(engine.session());
+        next.lastPop = engine.lastPop;
+        result =
+          action === "pop"
+            ? next.pop(data.index, data.strength)
+            : action === "freeze"
+              ? next.freeze(data.index)
+              : action === "merge"
+                ? next.merge(data.indices)
+                : next.changePopPressure(data.strength);
       } catch (err) {
         next.clear();
         throw err;

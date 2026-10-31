@@ -161,13 +161,23 @@ export class StudioView {
       ["move", "scale"].includes(this.tool) &&
       this.meshes[this.selected]
     ) {
+      if (this.data.meta?.[this.selected]?.frozen) {
+        document.getElementById("selectionInfo").textContent =
+          "FROZEN BALLOON / LOCKED";
+        return;
+      }
       const c = this.data.centers[this.selected],
         edit = this.data.edits[this.selected];
       anchor = c.map((v, k) => v + edit[k]);
       mode = this.tool === "scale" ? "scale" : "translate";
       this.target = { type: "balloon", index: this.selected };
     }
-    if (!anchor) return;
+    if (!anchor) {
+      if (["move", "scale"].includes(this.tool))
+        document.getElementById("selectionInfo").textContent =
+          "NO BALLOON SELECTED";
+      return;
+    }
     this.anchor = new T.Vector3(...anchor);
     this.proxy.position.copy(this.anchor);
     this.proxy.quaternion.identity();
@@ -178,7 +188,7 @@ export class StudioView {
     this.transform.attach(this.proxy);
     document.getElementById("selectionInfo").textContent =
       this.target.type === "balloon"
-        ? `BALLOON ${String(this.selected + 1).padStart(2, "0")} SELECTED`
+        ? `${this.data.meta?.[this.selected]?.members.length > 1 ? "MERGED" : "BALLOON"} ${this.data.meta?.[this.selected]?.members.map((v) => String(v + 1).padStart(2, "0")).join("+") || String(this.selected + 1).padStart(2, "0")} SELECTED`
         : this.target.type === "curve"
           ? `CURVE POINT ${this.selectedCurve + 1} SELECTED`
           : "BOUNDARY ROTATION";
@@ -259,7 +269,14 @@ export class StudioView {
   pointerDown(e, i) {
     if (this.busy || e.button !== 0) return;
     this.down = [e.clientX, e.clientY];
-    if (i === 0 && this.transform.object && this.transform.enabled) {
+    this.selectedOnDown = false;
+    const additive = !!(e.shiftKey || e.ctrlKey || e.metaKey);
+    if (
+      i === 0 &&
+      this.transform.object &&
+      this.transform.enabled &&
+      !additive
+    ) {
       this.setRay(e, i);
       // Refresh hover for touch and a first click with no preceding mousemove.
       this.transform.pointerHover({
@@ -295,8 +312,14 @@ export class StudioView {
         this.meshes.filter((m) => m.visible),
       )[0];
       if (hit) {
-        this.onSelect(hit.object.userData.index);
-        if (this.tool === "move")
+        this.onSelect(hit.object.userData.index, additive);
+        this.selectedOnDown = true;
+        if (additive) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          return;
+        }
+        if (this.tool === "move" && !this.data.meta?.[this.selected]?.frozen)
           target = { type: "balloon", index: this.selected };
       }
     }
@@ -352,6 +375,7 @@ export class StudioView {
       this.down &&
       Math.hypot(e.clientX - this.down[0], e.clientY - this.down[1]) < 5 &&
       this.tool !== "boundary" &&
+      !this.selectedOnDown &&
       !this.busy
     ) {
       const hit = this.hit(
@@ -359,7 +383,11 @@ export class StudioView {
         i,
         this.meshes.filter((m) => m.visible),
       )[0];
-      if (hit) this.onSelect(hit.object.userData.index);
+      if (hit)
+        this.onSelect(
+          hit.object.userData.index,
+          !!(e.shiftKey || e.ctrlKey || e.metaKey),
+        );
     }
     this.orbit.enabled = !this.busy;
   }
@@ -451,11 +479,13 @@ export class StudioView {
       document.getElementById("showBoundary").checked;
     data.balloons.forEach((raw, i) => {
       const g = geometry(raw),
-        color = new T.Color().setHSL(
-          0.51 + (i % 4) * 0.009,
-          0.48,
-          0.43 + (i % 3) * 0.055,
-        ),
+        color = data.meta?.[i]?.frozen
+          ? new T.Color(0x839bb7)
+          : new T.Color().setHSL(
+              0.51 + (i % 4) * 0.009,
+              0.48,
+              0.43 + (i % 3) * 0.055,
+            ),
         m = new T.Mesh(
           g,
           new T.MeshPhysicalMaterial({
@@ -513,11 +543,17 @@ export class StudioView {
     this.orbit.target.copy(c);
     this.orbit.update();
   }
-  select(index) {
+  select(index, indices) {
     this.selected = index;
+    if (indices !== undefined) this.selectedIndices = indices;
+    const selection = this.selectedIndices || new Set([index]);
     this.meshes.forEach((m, i) => {
-      m.material.emissive.setHex(i === index ? 0x083d42 : 0x000000);
-      m.material.emissiveIntensity = i === index ? 0.8 : 0;
+      m.material.emissive.setHex(selection.has(i) ? 0x087079 : 0x000000);
+      m.material.emissiveIntensity = selection.has(i)
+        ? i === index
+          ? 0.9
+          : 0.6
+        : 0;
     });
     this.attachTool();
   }

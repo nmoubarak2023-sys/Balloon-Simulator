@@ -22,6 +22,7 @@ const $ = (id) => document.getElementById(id),
     "tolerance",
   ];
 let needsRestore = false;
+let selectedIDs = new Set();
 let boundary,
   display,
   output = null,
@@ -63,7 +64,10 @@ function newWorker() {
   };
 }
 function request(action, data = {}) {
-  if (needsRestore && ["edit", "output"].includes(action)) {
+  if (
+    needsRestore &&
+    ["edit", "output", "pop", "freeze", "merge", "popPressure"].includes(action)
+  ) {
     if (!display || !configUsed)
       return Promise.reject(Error("Generate balloons first."));
     return request("restore", {
@@ -71,8 +75,10 @@ function request(action, data = {}) {
       params: configUsed,
       curve: curveUsed,
       edits: display.edits,
-    }).then(() => {
+      session: display,
+    }).then((restored) => {
       needsRestore = false;
+      display.canAdjustPop = restored.canAdjustPop;
       return request(action, data);
     });
   }
@@ -91,7 +97,7 @@ async function task(message, fn) {
   $("progress").value = 0;
   document
     .querySelectorAll(
-      ".controls button,.controls input,.controls select,.canvas-tools button,.rotation-controls button,.rotation-controls input,.rotation-controls select,#curveEditBtn",
+      ".controls button,.controls input,.controls select,.canvas-tools button,.balloon-actions button,.balloon-actions input,.rotation-controls button,.rotation-controls input,.rotation-controls select,#curveEditBtn",
     )
     .forEach((e) => (e.disabled = true));
   status(message);
@@ -106,9 +112,10 @@ async function task(message, fn) {
     $("cancelBtn").hidden = true;
     document
       .querySelectorAll(
-        ".controls button,.controls input,.controls select,.canvas-tools button,.rotation-controls button,.rotation-controls input,.rotation-controls select,#curveEditBtn",
+        ".controls button,.controls input,.controls select,.canvas-tools button,.balloon-actions button,.balloon-actions input,.rotation-controls button,.rotation-controls input,.rotation-controls select,#curveEditBtn",
       )
       .forEach((e) => (e.disabled = false));
+    updateActionButtons();
   }
 }
 function params() {
@@ -146,16 +153,26 @@ function invalidate() {
   $("outputStatus").classList.remove("mesh-warning");
 }
 function syncDisplay(result, fit = false) {
+  const activeID = display?.meta?.[selected]?.id;
   display = result;
   boundary = result.boundary;
   invalidate();
   view.show(result, fit);
   $("balloonSelect").replaceChildren(
-    ...result.balloons.map(
-      (_, i) => new Option(`BALLOON ${String(i + 1).padStart(2, "0")}`, i),
-    ),
+    ...result.balloons.map((_, i) => new Option(balloonLabel(i), i)),
   );
-  select(Math.min(selected, result.balloons.length - 1));
+  selectedIDs = new Set(
+    [...selectedIDs].filter((id) => result.meta?.some((m) => m.id === id)),
+  );
+  if (result.selectedIndex !== undefined) {
+    selectedIDs = new Set([result.meta[result.selectedIndex].id]);
+    selected = result.selectedIndex;
+  } else if (activeID && result.meta?.some((m) => m.id === activeID))
+    selected = result.meta.findIndex((m) => m.id === activeID);
+  else selected = Math.min(selected, result.balloons.length - 1);
+  if (!selectedIDs.size && result.meta?.[selected])
+    selectedIDs.add(result.meta[selected].id);
+  select(selected, false, true);
   const triangles = result.balloons.reduce(
     (n, b) => n + b.indices.length / 3,
     0,
@@ -164,21 +181,91 @@ function syncDisplay(result, fit = false) {
     `${result.balloons.length} BALLOONS / ${triangles.toLocaleString()} TRIANGLES`;
   $("fieldLabel").textContent = fileName.toUpperCase();
   view.curve(points, editCurve, $("pressureEnabled").checked || editCurve);
+  if (result.canAdjustPop && result.popStrength !== undefined) {
+    $("popPressure").value = Math.round(result.popStrength * 100);
+    $("popPressureValue").value = `${$("popPressure").value}%`;
+  }
 }
-function select(i) {
-  selected = Math.max(0, Number(i));
+function balloonLabel(i) {
+  const m = display?.meta?.[i];
+  return m
+    ? `${m.members.length > 1 ? "MERGED" : "BALLOON"} ${m.members.map((v) => String(v + 1).padStart(2, "0")).join("+")}${m.frozen ? " [FROZEN]" : ""}`
+    : `BALLOON ${i + 1}`;
+}
+function select(i, additive = false, preserve = false) {
+  selected = display?.balloons.length ? Math.max(0, Number(i)) : -1;
+  const id = display?.meta?.[selected]?.id;
+  if (!preserve) {
+    if (additive && id) {
+      if (selectedIDs.has(id)) selectedIDs.delete(id);
+      else selectedIDs.add(id);
+    } else selectedIDs = id ? new Set([id]) : new Set();
+  }
+  if (additive && id && !selectedIDs.has(id))
+    selected = (display?.meta || []).findIndex((m) => selectedIDs.has(m.id));
   $("balloonSelect").value = selected;
-  view.select(selected);
+  view.select(
+    selected,
+    new Set(
+      (display?.meta || [])
+        .map((m, k) => (selectedIDs.has(m.id) ? k : -1))
+        .filter((k) => k >= 0),
+    ),
+  );
   const e = display?.edits[selected] || [0, 0, 0, 1];
   ["moveX", "moveY", "moveZ", "scale"].forEach(
     (id, k) => ($(id).value = Number(e[k].toFixed(5))),
   );
+  renderMergeChoices();
+  updateActionButtons();
+}
+function renderMergeChoices() {
+  $("mergeChoices").replaceChildren(
+    ...(display?.meta || []).map((m, i) => {
+      const label = document.createElement("label"),
+        check = document.createElement("input");
+      check.type = "checkbox";
+      check.checked = selectedIDs.has(m.id);
+      check.disabled = busy;
+      check.onchange = () => select(i, true);
+      label.append(check, document.createTextNode(balloonLabel(i)));
+      return label;
+    }),
+  );
+}
+function updateActionButtons() {
+  const meta = display?.meta?.[selected],
+    locked = !!meta?.frozen,
+    ids = (display?.meta || [])
+      .map((m, i) => (selectedIDs.has(m.id) ? i : -1))
+      .filter((i) => i >= 0);
+  $("popBtn").disabled = busy || !meta || locked;
+  $("freezeBtn").disabled = busy || !meta;
+  $("freezeBtn").textContent = locked ? "Unfreeze" : "Freeze";
+  $("freezeBtn").setAttribute("aria-pressed", locked);
+  $("mergeBtn").disabled =
+    busy || ids.length < 2 || ids.some((i) => display.meta[i].frozen);
+  for (const id of [
+    "moveX",
+    "moveY",
+    "moveZ",
+    "scale",
+    "applyBalloonBtn",
+    "resetBalloonBtn",
+  ])
+    $(id).disabled = busy || !meta || locked;
+  $("balloonState").textContent = meta
+    ? `${balloonLabel(selected)} — ${locked ? "shape and position locked" : "editable"}. ${ids.length} selected for Merge.`
+    : "No balloons remain. Reset the operations to start again.";
+  $("operationHint").textContent = display?.canAdjustPop
+    ? "Adjust the slider to update the last pop."
+    : `${ids.length} selected · Shift/Ctrl-click or use merge checkboxes.`;
 }
 const view = new StudioView(
-  (i) => {
+  (i, additive = false) => {
     if (!busy) {
       if (view.tool === "curve") activateTool("move");
-      select(i);
+      select(i, additive);
     }
   },
   (p, i) => {
@@ -227,14 +314,14 @@ function onCanvasTransform(change) {
         await generate(true);
         status(
           change.degrees !== undefined
-            ? `Boundary rotated ${change.degrees}° about world ${change.axis}. Field regenerated; individual edits reset.`
-            : "Boundary rotated. Balloon field regenerated in its new orientation; individual edits reset.",
+            ? `Boundary rotated ${change.degrees}° about world ${change.axis}. Unfrozen edits reset; frozen geometry retained.`
+            : "Boundary rotated. Unfrozen edits reset; frozen geometry retained.",
         );
       } else if (change.type === "curve") {
         if ($("pressureEnabled").checked) {
           await generate();
           status(
-            "Curve point moved. Pressure applied; individual edits reset.",
+            "Curve point moved. Pressure applied; frozen shapes retained and unfrozen edits reset.",
           );
         } else
           status("Curve point moved. Enable pressure to deform the balloons.");
@@ -332,10 +419,10 @@ function showPoint() {
 function markCurveDirty() {
   status("Curve updated. Apply pressure to regenerate geometry.");
 }
-async function generate(fit = false) {
+async function generate(fit = false, preserve = true) {
   const p = params();
   const curve = view.samples(points);
-  const r = await request("generate", { boundary, params: p, curve });
+  const r = await request("generate", { boundary, params: p, curve, preserve });
   needsRestore = false;
   configUsed = p;
   curveUsed = curve;
@@ -431,7 +518,7 @@ async function loadBoundary(raw, name) {
   $("strength").value = $("strengthN").value = +(s * 0.12).toPrecision(4);
   $("influence").value = $("influenceN").value = +(s * 0.4).toPrecision(4);
   resetCurve();
-  await generate(true);
+  await generate(true, false);
 }
 function download(data, name, type) {
   const url = URL.createObjectURL(new Blob([data], { type })),
@@ -496,13 +583,66 @@ $("meshSelect").onchange = () =>
 $("demoBtn").onclick = () =>
   task("Restoring demonstration container…", async () => {
     demo();
-    await generate(true);
+    await generate(true, false);
   });
 $("shuffleBtn").onclick = () => {
   $("pointSeed").value =
     crypto.getRandomValues(new Uint32Array(1))[0] % 2147483647;
 };
 $("balloonSelect").onchange = () => select($("balloonSelect").value);
+$("popBtn").onclick = () =>
+  task("Popping balloon and applying local pressure…", async () => {
+    const result = await request("pop", {
+      index: selected,
+      strength: Number($("popPressure").value) / 100,
+    });
+    syncDisplay(result);
+    status(result.message);
+  });
+$("freezeBtn").onclick = () =>
+  task("Updating frozen balloon…", async () => {
+    const result = await request("freeze", { index: selected });
+    syncDisplay(result);
+    status(result.message);
+  });
+$("mergeBtn").onclick = () =>
+  task("Joining selected balloons into one volume…", async () => {
+    const indices = display.meta
+        .map((m, i) => (selectedIDs.has(m.id) ? i : -1))
+        .filter((i) => i >= 0),
+      result = await request("merge", { indices });
+    syncDisplay(result);
+    status(result.message);
+  });
+$("popPressure").oninput = () => {
+  $("popPressureValue").value = `${$("popPressure").value}%`;
+};
+$("popPressure").onchange = () => {
+  if (!display?.canAdjustPop) {
+    status("Pressure set for the next Pop!");
+    return;
+  }
+  const strength = Number($("popPressure").value) / 100;
+  task("Updating last pop pressure…", async () => {
+    try {
+      const result = await request("popPressure", { strength });
+      syncDisplay(result);
+      status(result.message);
+    } catch (err) {
+      $("popPressure").value = Math.round(display.popStrength * 100);
+      $("popPressureValue").value = `${$("popPressure").value}%`;
+      throw err;
+    }
+  });
+};
+$("resetOperationsBtn").onclick = () =>
+  task("Resetting balloon operations…", async () => {
+    selectedIDs.clear();
+    await generate(false, false);
+    status(
+      "Pop, Freeze, and Merge reset. A fresh balloon field was generated.",
+    );
+  });
 $("applyBalloonBtn").onclick = () =>
   task("Checking walls and neighboring balloons…", async () => {
     const edit = ["moveX", "moveY", "moveZ", "scale"].map((id) =>
@@ -670,7 +810,7 @@ $("saveProject").onclick = () =>
     if (!configUsed || !display) throw Error("Generate geometry first.");
     const obj = {
       format: "balloon-build",
-      version: 1,
+      version: 2,
       fileName,
       params: configUsed,
       curve: curveUsed,
@@ -680,9 +820,13 @@ $("saveProject").onclick = () =>
         indices: Array.from(display.boundary.indices),
       },
       edits: display.edits,
+      session: display,
+      popPressure: Number($("popPressure").value) / 100,
     };
     download(
-      JSON.stringify(obj),
+      JSON.stringify(obj, (_, value) =>
+        ArrayBuffer.isView(value) ? Array.from(value) : value,
+      ),
       "balloon-build-project.json",
       "application/json",
     );
@@ -696,7 +840,7 @@ $("projectFile").onchange = () =>
     if (!f) return;
     if (f.size > 80e6) throw Error("Project is too large.");
     const obj = JSON.parse(await f.text());
-    if (obj.format !== "balloon-build" || obj.version !== 1)
+    if (obj.format !== "balloon-build" || ![1, 2].includes(obj.version))
       throw Error("Unsupported project file.");
     for (const id of paramsIDs) $(id).value = obj.params[id];
     $("pressureEnabled").checked = !!obj.params.pressureEnabled;
@@ -712,14 +856,15 @@ $("projectFile").onchange = () =>
       throw Error("Invalid saved curve.");
     const raw = canonical(obj.boundary);
     if (
-      !Array.isArray(obj.edits) ||
-      obj.edits.length !== p.count ||
-      obj.edits.some(
-        (e) =>
-          !Array.isArray(e) ||
-          e.length !== 4 ||
-          e.some((v) => !Number.isFinite(v)),
-      )
+      obj.version === 1 &&
+      (!Array.isArray(obj.edits) ||
+        obj.edits.length !== p.count ||
+        obj.edits.some(
+          (e) =>
+            !Array.isArray(e) ||
+            e.length !== 4 ||
+            e.some((v) => !Number.isFinite(v)),
+        ))
     )
       throw Error("Invalid saved balloon edits.");
     boundary = raw;
@@ -733,11 +878,17 @@ $("projectFile").onchange = () =>
         params: p,
         curve,
         edits: obj.edits,
+        session:
+          obj.version === 2 ? { ...obj.session, boundary: raw } : undefined,
       });
     needsRestore = false;
     configUsed = p;
     curveUsed = curve;
     syncDisplay(result, true);
+    $("popPressure").value = Math.round(
+      (obj.popPressure ?? obj.session?.popStrength ?? 0.25) * 100,
+    );
+    $("popPressureValue").value = `${$("popPressure").value}%`;
     ["count", "strength", "influence"].forEach(
       (id) => ($(id + "N").value = $(id).value),
     );

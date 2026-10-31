@@ -52,6 +52,28 @@
               >CLICK A BALLOON TO SELECT</span
             >
           </div>
+          <div
+            class="balloon-actions"
+            role="toolbar"
+            aria-label="Balloon operations"
+          >
+            <button id="popBtn" class="pop-button">Pop!</button>
+            <button id="freezeBtn">Freeze</button>
+            <button id="mergeBtn">Merge</button>
+            <label for="popPressure"
+              >Pop pressure <output id="popPressureValue">25%</output
+              ><input
+                id="popPressure"
+                type="range"
+                min="0"
+                max="100"
+                value="25"
+                step="1"
+            /></label>
+            <span id="operationHint"
+              >Shift-click balloons to select several for Merge.</span
+            >
+          </div>
           <div id="exactRotation" class="rotation-controls" hidden>
             <label
               >Axis<select id="rotationAxis">
@@ -143,8 +165,8 @@
                   <p class="note">
                     Choose ROTATE BOUNDARY, select X, Y, or Z, then enter
                     degrees or use the 90° / 180° presets. Rings snap to 90° by
-                    default. Rotation regenerates the field and replaces
-                    individual edits.
+                    default. Rotation resets unfrozen edits. Frozen geometry
+                    stays fixed; a rotation that would exclude it is rejected.
                   </p>
                   <label class="check"
                     ><input id="showBoundary" type="checkbox" checked /> Show
@@ -236,8 +258,9 @@
                     GENERATE BALLOONS ↗
                   </button>
                   <p class="note">
-                    Generation replaces balloon edits. Seeds repeat within this
-                    app; arrangements differ from Python.
+                    Generation resets unfrozen edits, while frozen shapes,
+                    popped balloons, and merge groups persist. Seeds repeat
+                    within this app.
                   </p>
                 </div>
               </details>
@@ -307,7 +330,8 @@
                   <p class="note">
                     Edit curve, then apply pressure. Inward compression retains
                     a 25% core. Wall and contact constraints are reapplied.
-                    Applying pressure replaces individual edits.
+                    Applying pressure resets unfrozen edits. Frozen shapes
+                    remain fixed.
                   </p>
                 </div>
               </details>
@@ -316,6 +340,9 @@
                 <div class="section-body">
                   <label for="balloonSelect">Selected balloon</label
                   ><select id="balloonSelect"></select>
+                  <p id="balloonState" class="note">
+                    Select a balloon in either canvas.
+                  </p>
                   <div class="triple">
                     <label
                       >Move X<input
@@ -358,7 +385,35 @@
                 </div>
               </details>
               <details>
-                <summary><span>06</span> OUTPUT & EXPORT</summary>
+                <summary><span>06</span> POP! / FREEZE / MERGE</summary>
+                <div class="section-body">
+                  <p class="note">
+                    Pop! removes the active balloon and dents unfrozen
+                    neighbors. Set the pressure before popping, or adjust it
+                    after the last pop. A later edit, freeze, merge, or
+                    regeneration ends that live adjustment.
+                  </p>
+                  <p class="note">
+                    Freeze locks the active balloon's exact current shape and
+                    position. Frozen balloons remain fixed during curve
+                    pressure, regeneration, and nearby pops. Unfreeze before
+                    moving, popping, or merging them.
+                  </p>
+                  <label>Merge selection</label>
+                  <div id="mergeChoices" class="merge-choices"></div>
+                  <p class="note">
+                    Shift/Ctrl-click in either canvas, or use the checkboxes.
+                    Merge joins nearby balloons into one connected volume,
+                    filling only small contact gaps and removing internal
+                    interfaces.
+                  </p>
+                  <button id="resetOperationsBtn">
+                    RESET POP / FREEZE / MERGE
+                  </button>
+                </div>
+              </details>
+              <details>
+                <summary><span>07</span> OUTPUT & EXPORT</summary>
                 <div class="section-body">
                   <label for="outputMode">Output mode</label
                   ><select id="outputMode">
@@ -444,6 +499,17 @@
         Free. Rotation regenerates the balloon field and resets individual
         edits. Curve-point drags also regenerate the field and reset individual
         edits. Use ORBIT, or drag empty space, to change only the camera.
+      </p>
+      <p>
+        Pop! removes the active balloon; the slider controls the local dent on
+        its neighbors. Adjust the last pop until you make another edit. Freeze
+        locks the active balloon's shape and position; click Unfreeze to edit it
+        again. Shift/Ctrl-click several balloons or use the merge checkboxes,
+        then click Merge. Only touching or nearby balloons can form a connected
+        merged volume. Small contact gaps are filled, and internal interfaces
+        are removed. These states are included in saved projects. Reset
+        Pop/Freeze/Merge starts a fresh field while keeping the current boundary
+        and settings.
       </p>
       <p>
         This is geometric form finding, not a physical material simulation.
