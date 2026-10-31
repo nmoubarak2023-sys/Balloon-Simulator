@@ -155,3 +155,17 @@ test("a saved frozen balloon at a tilted wall can be reloaded and regenerated", 
   loaded.clear();
   next.clear();
 });
+test("reapplying an imported transform does not treat a rounding skin as a wall collision", () => {
+  const e = fixture(),
+    loaded = new BalloonEngine(m);
+  loaded.loadSession(e.session());
+  const index = loaded.balloons.findIndex((s, i) => !loaded.safe(i, s));
+  assert(index >= 0, "Fixture must include a rounded sloped-wall contact.");
+  const result = loaded.edit(index, loaded.edits[index].slice());
+  assert.equal(result.clamped, false);
+  assert(
+    loaded.safe(index, loaded.balloons[index], loaded.positionErrorTolerance),
+  );
+  e.clear();
+  loaded.clear();
+});

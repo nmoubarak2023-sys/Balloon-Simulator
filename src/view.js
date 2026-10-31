@@ -52,6 +52,11 @@ export class StudioView {
       r.setClearColor(0x000000, 0);
       r.outputColorSpace = T.SRGBColorSpace;
       el.appendChild(r.domElement);
+      r.domElement.tabIndex = 0;
+      r.domElement.setAttribute(
+        "aria-label",
+        id === "viewport" ? "3D geometry canvas" : "Plan geometry canvas",
+      );
       return r;
     });
     this.orbit = new OrbitControls(
@@ -268,6 +273,7 @@ export class StudioView {
   }
   pointerDown(e, i) {
     if (this.busy || e.button !== 0) return;
+    this.renderers[i].domElement.focus?.({ preventScroll: true });
     this.down = [e.clientX, e.clientY];
     this.selectedOnDown = false;
     const additive = !!(e.shiftKey || e.ctrlKey || e.metaKey);

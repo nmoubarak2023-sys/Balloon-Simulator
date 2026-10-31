@@ -388,6 +388,36 @@ export class BalloonEngine {
       }
     return s.status() === "NoError" && !s.isEmpty();
   }
+  pressureSafe(i, s, boundaryRoundingError = 0) {
+    if (s.status() !== "NoError" || s.isEmpty()) return false;
+    let part = s.subtract(this.boundary);
+    const outside = part.volume();
+    part.delete();
+    if (outside > this.allowedVolumeError(s, boundaryRoundingError))
+      return false;
+    for (let j = 0; j < this.balloons.length; j++)
+      if (j !== i) {
+        part = s.intersect(this.balloons[j]);
+        const overlap = part.volume();
+        part.delete();
+        if (overlap <= this.allowedVolumeError(this.balloons[j])) continue;
+        if (this.meta[j].frozen) return false;
+        part = this.balloons[j].subtract(s);
+        const ok =
+          part.status() === "NoError" &&
+          !part.isEmpty() &&
+          part.volume() >= this.balloons[j].volume() * 0.02;
+        let connected = false;
+        if (ok) {
+          const pieces = part.decompose();
+          connected = pieces.length === 1;
+          pieces.forEach((piece) => piece.delete());
+        }
+        part.delete();
+        if (!ok || !connected) return false;
+      }
+    return true;
+  }
   edit(i, requested) {
     this.requireEditable(i);
     this.lastPop = null;
@@ -398,13 +428,21 @@ export class BalloonEngine {
       requested[3] > 3
     )
       throw Error("Invalid individual balloon edit.");
+    let boundaryRoundingError = 0;
+    if (this.positionErrorTolerance) {
+      const outside = this.balloons[i].subtract(this.boundary),
+        leak = outside.volume();
+      outside.delete();
+      if (leak > this.allowedVolumeError(this.balloons[i]))
+        boundaryRoundingError = this.positionErrorTolerance;
+    }
     let accepted = this.edits[i].slice(),
       clamped = false;
     for (const axis of [3, 0, 1, 2, 0, 1, 2]) {
       let goal = accepted.slice();
       goal[axis] = requested[axis];
       let test = this.candidate(i, goal);
-      if (this.safe(i, test)) {
+      if (this.pressureSafe(i, test, boundaryRoundingError)) {
         accepted = goal;
         test.delete();
         continue;
@@ -418,7 +456,7 @@ export class BalloonEngine {
           trial = accepted.slice();
         trial[axis] += t * (requested[axis] - accepted[axis]);
         test = this.candidate(i, trial);
-        const ok = this.safe(i, test);
+        const ok = this.pressureSafe(i, test, boundaryRoundingError);
         test.delete();
         if (ok) lo = t;
         else hi = t;
@@ -426,14 +464,25 @@ export class BalloonEngine {
       accepted[axis] += lo * (requested[axis] - accepted[axis]);
     }
     const candidate = this.candidate(i, accepted);
-    if (!this.safe(i, candidate)) {
+    if (!this.pressureSafe(i, candidate, boundaryRoundingError)) {
       candidate.delete();
       throw Error("Edit could not be verified; previous balloon preserved.");
     }
+    let deformedNeighbors = 0;
+    for (let j = 0; j < this.balloons.length; j++)
+      if (j !== i && !this.meta[j].frozen) {
+        const contact = this.balloons[j].intersect(candidate),
+          volume = contact.volume();
+        contact.delete();
+        if (volume > this.allowedVolumeError(this.balloons[j])) {
+          this.replaceEntity(j, this.balloons[j].subtract(candidate));
+          deformedNeighbors++;
+        }
+      }
     this.balloons[i].delete();
     this.balloons[i] = candidate;
     this.edits[i] = accepted;
-    return { ...this.snapshot(), clamped };
+    return { ...this.snapshot(), clamped, deformedNeighbors };
   }
   restore(raw, params, curve, edits) {
     this.generate(raw, params, curve);

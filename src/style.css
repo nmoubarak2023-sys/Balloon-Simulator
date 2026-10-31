@@ -1025,3 +1025,37 @@ footer {
     padding: 7px 10px;
   }
 }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+#undoBtn {
+  border: 1px solid #21e0ed66;
+  color: var(--cyan);
+  padding: 8px 13px;
+  font-size: 10px;
+}
+#undoBtn small {
+  font-size: 7px;
+  opacity: 0.65;
+  margin-left: 9px;
+}
+#undoBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+@media (max-width: 720px) {
+  .header-actions {
+    gap: 5px;
+  }
+  #undoBtn {
+    padding: 7px 9px;
+  }
+  #undoBtn small {
+    display: none;
+  }
+  #helpBtn {
+    font-size: 8px;
+  }
+}

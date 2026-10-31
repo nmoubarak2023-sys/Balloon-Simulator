@@ -1,7 +1,9 @@
 import Module from "manifold-3d";
 import wasmURL from "manifold-3d/manifold.wasm?url";
 import { BalloonEngine } from "./engine.js";
+import { GeometryHistory } from "./history.js";
 let engine;
+const history = new GeometryHistory(20);
 const ready = Module({ locateFile: () => wasmURL }).then((m) => {
   m.setup();
   engine = new BalloonEngine(m);
@@ -31,30 +33,39 @@ self.onmessage = async ({ data }) => {
         next.clear();
         throw err;
       }
-      engine.clear();
-      engine = next;
-    } else if (["pop", "freeze", "merge", "popPressure"].includes(action)) {
+      engine = data.undoRestore
+        ? history.replace(engine, next)
+        : history.commit(engine, next, action);
+    } else if (
+      ["pop", "freeze", "merge", "popPressure", "edit"].includes(action)
+    ) {
       const next = engine.fork();
       try {
         result =
-          action === "pop"
-            ? next.pop(data.index, data.strength)
-            : action === "freeze"
-              ? next.freeze(data.index)
-              : action === "merge"
-                ? next.merge(data.indices)
-                : next.changePopPressure(data.strength);
+          action === "edit"
+            ? next.edit(data.index, data.edit)
+            : action === "pop"
+              ? next.pop(data.index, data.strength)
+              : action === "freeze"
+                ? next.freeze(data.index)
+                : action === "merge"
+                  ? next.merge(data.indices)
+                  : next.changePopPressure(data.strength);
       } catch (err) {
         next.clear();
         throw err;
       }
-      engine.clear();
-      engine = next;
-    } else if (action === "edit") result = engine.edit(data.index, data.edit);
-    else if (action === "output")
+      engine = history.commit(engine, next, action);
+    } else if (action === "undo") {
+      engine = history.undo(engine);
+      result = engine.snapshot();
+    } else if (action === "output")
       result = engine.output(data.mode, data.tolerance);
     else throw Error("Unknown operation");
-    postMessage({ id, result });
+    postMessage({
+      id,
+      result: { ...result, historyDepth: history.past.length },
+    });
   } catch (error) {
     postMessage({ id, error: error.message });
   }

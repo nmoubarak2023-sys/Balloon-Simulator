@@ -101,6 +101,7 @@ function contactBridge(engine, a, b, maxGap) {
 
 export const lifecycleMethods = {
   initLifecycle(params) {
+    this.positionErrorTolerance = 0;
     this.params = { ...params };
     this.meta = this.balloons.map((_, i) => ({
       id: `b${i}`,
@@ -146,6 +147,7 @@ export const lifecycleMethods = {
       next.popStrength = this.popStrength;
       next.params = { ...this.params };
       next.lastPop = this.lastPop;
+      next.positionErrorTolerance = this.positionErrorTolerance || 0;
       return next;
     } catch (err) {
       next.clear();
@@ -224,6 +226,7 @@ export const lifecycleMethods = {
       throw Error("Invalid saved pop state.");
     // JSON/display coordinates are Float32. Permit only a bounded quantization skin.
     const positionError = quantizationError(state.boundary);
+    this.positionErrorTolerance = positionError;
     for (let i = 0; i < this.balloons.length; i++)
       if (!this.safe(i, this.balloons[i], positionError))
         throw Error(
@@ -431,6 +434,11 @@ export const lifecycleMethods = {
         .map((meta, i) => ({ meta, i }))
         .filter((x) => x.meta.frozen),
       frozenMembers = new Set(frozen.flatMap((x) => x.meta.members));
+    if (frozen.length)
+      this.positionErrorTolerance = Math.max(
+        this.positionErrorTolerance || 0,
+        sourceEngine?.positionErrorTolerance || 0,
+      );
     for (let i = this.meta.length - 1; i >= 0; i--)
       if (
         this.popped.includes(this.meta[i].members[0]) ||

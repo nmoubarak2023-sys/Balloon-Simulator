@@ -13,8 +13,12 @@
   <body>
     <header>
       <a class="brand" href="./"><b>◉</b> BALLOON<span>BUILD</span></a
-      ><span class="header-note">VOLUMETRIC DESIGN STUDIO &nbsp; / 01</span
-      ><button id="helpBtn">HOW IT WORKS ↗</button>
+      ><span class="header-note">VOLUMETRIC DESIGN STUDIO &nbsp; / 01</span>
+      <div class="header-actions">
+        <button id="undoBtn" disabled title="Undo last action (Ctrl+Z)">
+          ↶ UNDO <small>CTRL+Z</small></button
+        ><button id="helpBtn">HOW IT WORKS ↗</button>
+      </div>
     </header>
     <main>
       <div class="workspace">
@@ -378,9 +382,10 @@
                     </button>
                   </div>
                   <p class="note">
-                    Offsets are relative to the post-pressure baseline. Edits
-                    are clamped to prevent wall crossings and balloon
-                    collisions.
+                    Moving or scaling a balloon dents unfrozen neighbors to make
+                    space on release. Walls and frozen balloons remain fixed.
+                    Moves cannot destroy or split a neighbor. Undo restores the
+                    complete field before a move.
                   </p>
                 </div>
               </details>
@@ -484,8 +489,8 @@
         <li>
           Choose MOVE BALLOON and drag any balloon directly, or use its axis
           arrows. SCALE BALLOON provides uniform scale handles. On release,
-          edits are limited to safe positions inside the wall and away from
-          neighbors.
+          unfrozen neighbors deform to make space. Walls and frozen balloons
+          remain constraints, and neighbors retain a small positive volume.
         </li>
         <li>
           Build shell assembly or Boolean subtraction, then export. Save a
@@ -510,6 +515,14 @@
         are removed. These states are included in saved projects. Reset
         Pop/Freeze/Merge starts a fresh field while keeping the current boundary
         and settings.
+      </p>
+      <p>
+        UNDO or Ctrl+Z reverses the last modeling or control action, including
+        all neighboring shapes changed by a movement. Up to 20 actions are
+        available. Normal text editing keeps its own Ctrl+Z behavior inside
+        input fields. Camera navigation, selection, downloads, and opening this
+        help are not undo steps. Undo history lasts for this page session and is
+        not saved in projects.
       </p>
       <p>
         This is geometric form finding, not a physical material simulation.

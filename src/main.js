@@ -8,6 +8,7 @@ import { bounds, canonical } from "./engine.js";
 import { rhinoRaw, addRhinoMesh } from "./rhino-io.js";
 import { transformMesh, draggedEdit, rotationMatrix } from "./interaction.js";
 import { addTechnicalFrames } from "./frames.js";
+import { UndoJournal, isUndoShortcut } from "./history.js";
 const $ = (id) => document.getElementById(id),
   paramsIDs = [
     "count",
@@ -22,6 +23,11 @@ const $ = (id) => document.getElementById(id),
     "tolerance",
   ];
 let needsRestore = false;
+const undoJournal = new UndoJournal(20);
+let lastUIState = null,
+  undoing = false,
+  workerEpoch = 0,
+  taskHadModelChange = false;
 let selectedIDs = new Set();
 let boundary,
   display,
@@ -43,6 +49,7 @@ function status(message, error = false) {
   $("status").parentElement.classList.toggle("error", error);
 }
 function newWorker() {
+  workerEpoch++;
   worker = new Worker(new URL("./worker.js", import.meta.url), {
     type: "module",
   });
@@ -76,21 +83,62 @@ function request(action, data = {}) {
       curve: curveUsed,
       edits: display.edits,
       session: display,
+      recovery: true,
     }).then((restored) => {
       needsRestore = false;
       display.canAdjustPop = restored.canAdjustPop;
       return request(action, data);
     });
   }
+  const tracksModel =
+    [
+      "generate",
+      "restore",
+      "edit",
+      "pop",
+      "freeze",
+      "merge",
+      "popPressure",
+    ].includes(action) &&
+    !undoing &&
+    !data.recovery &&
+    !data.undoRestore;
+  const before = tracksModel
+    ? {
+        kind: "model",
+        ui: lastUIState || captureUI(),
+        model: display,
+        epoch: workerEpoch,
+        label: {
+          generate: "Generate field",
+          restore: "Open project",
+          edit: "Move / scale balloon",
+          pop: "Pop!",
+          freeze: "Freeze / unfreeze",
+          merge: "Merge",
+          popPressure: "Pop pressure",
+        }[action],
+      }
+    : null;
   return new Promise((resolve, reject) => {
     const id = ++seq;
     pending.set(id, { resolve, reject });
     worker.postMessage({ id, action, ...data });
+  }).then((result) => {
+    if (tracksModel) {
+      taskHadModelChange = true;
+      if (before.model) undoJournal.push(before);
+    }
+    return result;
   });
 }
 async function task(message, fn) {
   if (busy) return;
   busy = true;
+  updateUndoButton();
+  taskHadModelChange = false;
+  const uiBefore = captureUI();
+  let succeeded = false;
   view.setBusy(true);
   $("progress").hidden = false;
   $("cancelBtn").hidden = false;
@@ -103,6 +151,7 @@ async function task(message, fn) {
   status(message);
   try {
     await fn();
+    succeeded = true;
   } catch (e) {
     status(e.message, true);
   } finally {
@@ -116,8 +165,192 @@ async function task(message, fn) {
       )
       .forEach((e) => (e.disabled = false));
     updateActionButtons();
+    if (
+      !undoing &&
+      succeeded &&
+      !taskHadModelChange &&
+      uiBefore.model &&
+      uiSignature(uiBefore) !== uiSignature(captureUI())
+    )
+      undoJournal.push({
+        kind: "ui",
+        ui: uiBefore,
+        label: message.replace(/…$/, ""),
+      });
+    if (!undoing) lastUIState = captureUI();
+    updateUndoButton();
   }
 }
+function captureUI() {
+  return {
+    model: display,
+    boundary,
+    fileName,
+    meshChoices,
+    points: points.map((p) => p.slice()),
+    configUsed,
+    curveUsed,
+    selected,
+    selectedIDs: [...selectedIDs],
+    tool: view.tool,
+    editCurve,
+    output,
+    controls: Object.fromEntries(
+      [
+        ...document.querySelectorAll("input[id]:not([type=file]),select[id]"),
+      ].map((el) => [
+        el.id,
+        {
+          value: el.value,
+          checked: el.checked,
+          min: el.getAttribute("min"),
+          max: el.getAttribute("max"),
+          step: el.getAttribute("step"),
+        },
+      ]),
+    ),
+  };
+}
+function uiSignature(state) {
+  return JSON.stringify({
+    controls: state.controls,
+    points: state.points,
+    fileName: state.fileName,
+    output: state.output
+      ? {
+          mode: state.output.mode,
+          tolerance: state.output.tolerance,
+          message: state.output.message,
+        }
+      : null,
+  });
+}
+function recordUI(before, label) {
+  if (busy || undoing || !before?.model) return;
+  if (uiSignature(before) !== uiSignature(captureUI()))
+    undoJournal.push({ kind: "ui", ui: before, label });
+  lastUIState = captureUI();
+  updateUndoButton();
+}
+function updateUndoButton() {
+  const entry = undoJournal.peek();
+  $("undoBtn").disabled = busy || !entry;
+  $("undoBtn").title = entry
+    ? `Undo ${entry.label} (Ctrl+Z)`
+    : "Nothing to undo";
+}
+function restoreUI(context, result) {
+  const oldBounds = display?.boundary ? bounds(display.boundary) : null,
+    newBounds = bounds(context.model.boundary);
+  const refit =
+    oldBounds &&
+    [...newBounds.center, ...newBounds.span].some(
+      (v, i) =>
+        Math.abs(v - [...oldBounds.center, ...oldBounds.span][i]) >
+        Math.max(...newBounds.span) * 1e-8,
+    );
+  for (const [id, data] of Object.entries(context.controls)) {
+    const el = $(id);
+    if (!el) continue;
+    for (const key of ["min", "max", "step"]) {
+      if (data[key] !== null) el.setAttribute(key, data[key]);
+      else el.removeAttribute(key);
+    }
+    el.value = data.value;
+    if (typeof data.checked === "boolean") el.checked = data.checked;
+  }
+  points = context.points.map((p) => p.slice());
+  fileName = context.fileName;
+  meshChoices = context.meshChoices;
+  configUsed = context.configUsed;
+  curveUsed = context.curveUsed;
+  selected = context.selected;
+  selectedIDs = new Set(context.selectedIDs);
+  editCurve = context.editCurve;
+  boundary = result?.boundary || context.boundary;
+  $("fileName").textContent = fileName;
+  view.selectedCurve = Number(context.controls.curvePoint.value) || 0;
+  view.setTool(context.tool);
+  $("exactRotation").hidden = context.tool !== "boundary";
+  $("curveEditBtn").setAttribute("aria-pressed", editCurve);
+  $("meshSelect").replaceChildren(
+    ...meshChoices.map((mesh, i) => new Option(mesh.name, i)),
+  );
+  $("meshSelect").hidden = meshChoices.length < 2;
+  $("meshSelect").value = context.controls.meshSelect.value;
+  for (const id of ["meshFile", "curveFile", "projectFile"]) $(id).value = "";
+  display = context.model;
+  syncDisplay({ ...(result || display), selectedIndex: undefined }, false);
+  if (refit) view.fit();
+  curveUI();
+  output = context.output;
+  if (output) {
+    $("outputStatus").textContent = output.message;
+    $("outputStatus").classList.toggle("mesh-warning", !!output.incomplete);
+    view.output(output.mode === "boolean" ? output.shells[0] : null);
+  }
+  view.transform.setRotationSnap(
+    Number($("rotationSnap").value)
+      ? (Number($("rotationSnap").value) * Math.PI) / 180
+      : null,
+  );
+  $("popPressure").value = context.controls.popPressure.value;
+  $("popPressureValue").value = `${$("popPressure").value}%`;
+}
+async function undoLast() {
+  if (busy || !undoJournal.length) return;
+  const entry = undoJournal.peek();
+  undoing = true;
+  try {
+    await task(`Undoing ${entry.label}…`, async () => {
+      let result;
+      if (entry.kind === "model") {
+        result =
+          entry.epoch === workerEpoch && !needsRestore
+            ? await request("undo")
+            : await request("restore", {
+                session: entry.model,
+                undoRestore: true,
+              });
+        needsRestore = false;
+      }
+      restoreUI(entry.ui, result);
+      undoJournal.pop();
+      status(`Undid ${entry.label}.`);
+    });
+  } finally {
+    undoing = false;
+    lastUIState = captureUI();
+    updateUndoButton();
+  }
+}
+$("undoBtn").onclick = undoLast;
+document.addEventListener("keydown", (event) => {
+  if (isUndoShortcut(event)) {
+    event.preventDefault();
+    $("undoBtn").click();
+  }
+});
+document.addEventListener(
+  "change",
+  (event) => {
+    const el = event.target;
+    if (
+      !el.id ||
+      el.type === "file" ||
+      ["balloonSelect", "curvePoint", "meshSelect"].includes(el.id)
+    )
+      return;
+    queueMicrotask(() => {
+      if (!busy && !undoing)
+        recordUI(
+          lastUIState,
+          `Change ${el.labels?.[0]?.textContent?.trim() || el.id}`,
+        );
+    });
+  },
+  true,
+);
 function params() {
   const p = Object.fromEntries(
     paramsIDs.map((id) => [id, Number($(id).value)]),
@@ -218,6 +451,7 @@ function select(i, additive = false, preserve = false) {
   );
   renderMergeChoices();
   updateActionButtons();
+  if (!busy && !undoing && display) lastUIState = captureUI();
 }
 function renderMergeChoices() {
   $("mergeChoices").replaceChildren(
@@ -288,6 +522,7 @@ function activateTool(tool) {
   $("curveEditBtn").setAttribute("aria-pressed", editCurve);
   view.setTool(tool);
   curveUI();
+  if (!undoing && display) lastUIState = captureUI();
 }
 document
   .querySelectorAll("[data-canvas-tool]")
@@ -335,8 +570,8 @@ function onCanvasTransform(change) {
         syncDisplay(result);
         status(
           result.clamped
-            ? "Drag limited by a wall or neighboring balloon. Accepted position and scale are shown."
-            : "Canvas edit applied. Balloon remains inside the boundary without overlap.",
+            ? `Move limited by a wall, frozen balloon, or insufficient space. ${result.deformedNeighbors} neighbors deformed.`
+            : `Move applied. ${result.deformedNeighbors} neighboring balloons deformed to make space.`,
         );
       }
     } catch (err) {
@@ -586,8 +821,10 @@ $("demoBtn").onclick = () =>
     await generate(true, false);
   });
 $("shuffleBtn").onclick = () => {
+  const before = captureUI();
   $("pointSeed").value =
     crypto.getRandomValues(new Uint32Array(1))[0] % 2147483647;
+  recordUI(before, "Shuffle point seed");
 };
 $("balloonSelect").onchange = () => select($("balloonSelect").value);
 $("popBtn").onclick = () =>
@@ -652,8 +889,8 @@ $("applyBalloonBtn").onclick = () =>
     syncDisplay(result);
     status(
       result.clamped
-        ? "Edit clamped at a wall or neighboring balloon. Accepted values are shown."
-        : "Individual edit applied. Containment and neighboring volumes checked.",
+        ? `Edit limited by a wall, frozen balloon, or insufficient space. ${result.deformedNeighbors} neighbors deformed.`
+        : `Edit applied. ${result.deformedNeighbors} neighbors deformed to make space.`,
     );
   });
 $("resetBalloonBtn").onclick = () =>
@@ -672,10 +909,13 @@ $("curvePoint").onchange = () => {
   view.attachTool();
 };
 $("resetCurveBtn").onclick = () => {
+  const before = captureUI();
   resetCurve();
   markCurveDirty();
+  recordUI(before, "Reset curve");
 };
 $("updateCurveBtn").onclick = () => {
+  const before = captureUI();
   const p = ["curveX", "curveY", "curveZ"].map((id) => Number($(id).value));
   if (p.some((v) => !Number.isFinite(v))) {
     status("Enter finite curve coordinates.", true);
@@ -684,6 +924,7 @@ $("updateCurveBtn").onclick = () => {
   points[Number($("curvePoint").value)] = p;
   curveUI();
   markCurveDirty();
+  recordUI(before, "Move curve point");
 };
 $("curveEditBtn").onclick = () => {
   activateTool(editCurve ? "move" : "curve");
