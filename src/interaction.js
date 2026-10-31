@@ -1,5 +1,33 @@
 import { Matrix4, Vector3 } from "three";
 
+export function rotationMatrix(center, axis, degrees) {
+  if (!["X", "Y", "Z"].includes(axis) || !Number.isFinite(degrees))
+    throw Error("Choose a rotation axis and enter finite degrees.");
+  const vector = new Vector3(
+    axis === "X" ? 1 : 0,
+    axis === "Y" ? 1 : 0,
+    axis === "Z" ? 1 : 0,
+  );
+  const rotation = new Matrix4().makeRotationAxis(
+    vector,
+    ((degrees % 360) * Math.PI) / 180,
+  );
+  rotation.elements = rotation.elements.map((v) =>
+    Math.abs(v) < 1e-14
+      ? 0
+      : Math.abs(v - 1) < 1e-14
+        ? 1
+        : Math.abs(v + 1) < 1e-14
+          ? -1
+          : v,
+  );
+  return new Matrix4()
+    .makeTranslation(...center)
+    .multiply(rotation)
+    .multiply(new Matrix4().makeTranslation(...center.map((v) => -v)))
+    .toArray();
+}
+
 export function transformMesh(raw, matrix) {
   const m = new Matrix4().fromArray(matrix),
     p = new Vector3(),

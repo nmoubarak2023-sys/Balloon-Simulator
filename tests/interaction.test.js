@@ -6,8 +6,35 @@ import {
   transformMesh,
   draggedEdit,
   uniformFactor,
+  rotationMatrix,
 } from "../src/interaction.js";
 import { BalloonEngine, topology } from "../src/engine.js";
+test("exact degree presets rotate about the model center on each world axis", () => {
+  const raw = {
+      positions: new Float32Array([12, 23, 34]),
+      indices: new Uint32Array(),
+    },
+    center = [10, 20, 30];
+  for (const [axis, degrees, expected] of [
+    ["Z", 90, [7, 22, 34]],
+    ["Z", 180, [8, 17, 34]],
+    ["Z", -90, [13, 18, 34]],
+    ["X", 90, [12, 16, 33]],
+    ["Y", 90, [14, 23, 28]],
+  ])
+    assert.deepEqual(
+      Array.from(
+        transformMesh(raw, rotationMatrix(center, axis, degrees)).positions,
+      ),
+      expected,
+    );
+  let rotated = raw;
+  for (let i = 0; i < 4; i++)
+    rotated = transformMesh(rotated, rotationMatrix(center, "Z", 90));
+  assert.deepEqual(rotated.positions, raw.positions);
+  assert.throws(() => rotationMatrix(center, "A", 90), /axis/);
+  assert.throws(() => rotationMatrix(center, "Z", NaN), /finite/);
+});
 test("rotation changes imported mesh coordinates about its center and preserves closed volume", async () => {
   const m = await Module();
   m.setup();

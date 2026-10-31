@@ -10,7 +10,9 @@ A browser-based geometric balloon design studio inspired by a supplied Grasshopp
 4. Choose **MOVE BALLOON**, click any balloon, then drag the balloon itself or an axis handle. **SCALE BALLOON** offers uniform scale handles. Both preview during dragging and commit collision/containment-checked edits on release; impossible requests snap back to the closest accepted position. Numeric Apply and Reset remain available. Drag empty space or choose **ORBIT** to move the camera.
 5. Build a shell assembly (separate nested shells, no welding/union/subtraction) or Boolean subtraction. Export .3dm, OBJ, or STL. Save/open JSON projects to preserve the last generated settings, boundary, pressure curve, and accepted edits.
 
-**ROTATE BOUNDARY** exposes rotation rings around the imported mesh's center. This changes actual mesh coordinates, including the exported and saved boundary. Releasing regenerates the balloon field in the rotated volume and resets individual balloon edits. The pressure curve stays in world coordinates. This is separate from camera orbit and auto rotate.
+**ROTATE BOUNDARY** exposes X/Y/Z axis selection, an exact degree field, −90° / +90° / 180° presets, and rotation rings around the imported mesh's center. Values are incremental rotations about the selected world axis; for example, two +90° actions rotate 180° in total. Rings snap to 90° by default; 15°, 45°, and free rotation are also available. This changes actual mesh coordinates, including the exported and saved boundary. Rotation regenerates the balloon field in the rotated volume and resets individual balloon edits. The pressure curve stays in world coordinates. This is separate from camera orbit and auto rotate.
+
+The interface uses a black background and responsive double-line cyan frames with tabbed upper edges and diagonal corners, following the supplied graphic reference. Introductory marketing copy has been removed.
 
 Canvas tests exercise real raycasting and pointer handlers through a small DOM adapter, plus the geometric solver. Live browser drag QA could not be completed for this update because the computer-use connection could not verify the browser URL.
 

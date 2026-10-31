@@ -133,7 +133,7 @@ export class StudioView {
       orbit: "DRAG TO ORBIT · SCROLL TO ZOOM",
       move: "CLICK A BALLOON · DRAG IT OR ITS AXIS ARROWS · EMPTY SPACE ORBITS",
       scale: "CLICK A BALLOON · DRAG A SCALE HANDLE · RELEASE TO CHECK FIT",
-      boundary: "DRAG A ROTATION RING · RELEASE TO REGENERATE BALLOONS",
+      boundary: "ENTER EXACT DEGREES ABOVE · OR DRAG A SNAPPED ROTATION RING",
       curve: "DRAG A CURVE POINT · AXIS ARROWS CONTROL X / Y / Z",
     };
     document.getElementById("canvasHint").textContent = hint[tool];

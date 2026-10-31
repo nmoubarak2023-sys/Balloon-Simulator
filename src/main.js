@@ -6,7 +6,8 @@ import { STLExporter } from "three/addons/exporters/STLExporter.js";
 import { StudioView, geometry, rawGeometry } from "./view.js";
 import { bounds, canonical } from "./engine.js";
 import { rhinoRaw, addRhinoMesh } from "./rhino-io.js";
-import { transformMesh, draggedEdit } from "./interaction.js";
+import { transformMesh, draggedEdit, rotationMatrix } from "./interaction.js";
+import { addTechnicalFrames } from "./frames.js";
 const $ = (id) => document.getElementById(id),
   paramsIDs = [
     "count",
@@ -90,7 +91,7 @@ async function task(message, fn) {
   $("progress").value = 0;
   document
     .querySelectorAll(
-      ".controls button,.controls input,.controls select,.canvas-tools button,#curveEditBtn",
+      ".controls button,.controls input,.controls select,.canvas-tools button,.rotation-controls button,.rotation-controls input,.rotation-controls select,#curveEditBtn",
     )
     .forEach((e) => (e.disabled = true));
   status(message);
@@ -105,7 +106,7 @@ async function task(message, fn) {
     $("cancelBtn").hidden = true;
     document
       .querySelectorAll(
-        ".controls button,.controls input,.controls select,.canvas-tools button,#curveEditBtn",
+        ".controls button,.controls input,.controls select,.canvas-tools button,.rotation-controls button,.rotation-controls input,.rotation-controls select,#curveEditBtn",
       )
       .forEach((e) => (e.disabled = false));
   }
@@ -193,6 +194,7 @@ function activateTool(tool) {
   if (busy) return;
   if (output?.mode === "boolean") invalidate();
   if (tool === "boundary") $("showBoundary").checked = true;
+  $("exactRotation").hidden = tool !== "boundary";
   editCurve = tool === "curve";
   if (editCurve) $("pressureEnabled").checked = true;
   $("curveEditBtn").setAttribute("aria-pressed", editCurve);
@@ -223,7 +225,9 @@ function onCanvasTransform(change) {
         boundary = transformMesh(display.boundary, change.matrix);
         await generate(true);
         status(
-          "Boundary rotated. Balloon field regenerated in its new orientation; individual edits reset.",
+          change.degrees !== undefined
+            ? `Boundary rotated ${change.degrees}° about world ${change.axis}. Field regenerated; individual edits reset.`
+            : "Boundary rotated. Balloon field regenerated in its new orientation; individual edits reset.",
         );
       } else if (change.type === "curve") {
         if ($("pressureEnabled").checked) {
@@ -254,6 +258,47 @@ function onCanvasTransform(change) {
     }
   });
 }
+function exactRotation(degrees) {
+  if (busy || !display) return;
+  try {
+    if (String(degrees).trim() === "" || !Number.isFinite(Number(degrees)))
+      throw Error("Enter a finite rotation in degrees.");
+    const angle = Number(degrees),
+      axis = $("rotationAxis").value;
+    if (angle % 360 === 0) {
+      status("No orientation change: rotation is a multiple of 360°.");
+      return;
+    }
+    activateTool("boundary");
+    onCanvasTransform({
+      type: "boundary",
+      matrix: rotationMatrix(bounds(display.boundary).center, axis, angle),
+      degrees: angle,
+      axis,
+    });
+  } catch (err) {
+    status(err.message, true);
+  }
+}
+$("applyRotation").onclick = () => exactRotation($("rotationDegrees").value);
+document.querySelectorAll("[data-rotate-degrees]").forEach(
+  (button) =>
+    (button.onclick = () => {
+      $("rotationDegrees").value = button.dataset.rotateDegrees;
+      exactRotation(button.dataset.rotateDegrees);
+    }),
+);
+$("rotationDegrees").onkeydown = (e) => {
+  if (e.key === "Enter") {
+    $("applyRotation").click();
+  }
+};
+$("rotationSnap").onchange = () => {
+  const degrees = Number($("rotationSnap").value);
+  view.transform.setRotationSnap(degrees ? (degrees * Math.PI) / 180 : null);
+};
+view.transform.setRotationSnap(Math.PI / 2);
+addTechnicalFrames();
 function resetCurve() {
   const b = bounds(boundary);
   points = [
