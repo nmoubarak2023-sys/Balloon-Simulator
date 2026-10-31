@@ -9,6 +9,7 @@
   color: #e5eff0;
   background: #05090b;
   --cyan: #21e0ed;
+  --accent: #dc24f4;
   --line: #214247;
   --dim: #82979b;
 }
@@ -436,10 +437,10 @@ select {
   accent-color: var(--cyan);
 }
 .status-bar.error {
-  color: #ffab91;
+  color: var(--accent);
 }
 .status-bar.error .dot {
-  background: #ffab91;
+  background: var(--accent);
 }
 footer {
   display: flex;
@@ -947,7 +948,7 @@ footer {
   }
 }
 .note.mesh-warning {
-  color: #efb689;
+  color: var(--accent);
 }
 .balloon-actions {
   display: flex;
@@ -964,8 +965,13 @@ footer {
   padding: 7px 13px;
 }
 .balloon-actions .pop-button {
-  color: #ffbf9a;
-  border-color: #b67450;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.balloon-actions .pop-button:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: #dc24f41a;
 }
 .balloon-actions label {
   display: grid;
