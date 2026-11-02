@@ -49,6 +49,7 @@ function status(message, error = false) {
   $("status").textContent = message;
   $("status").parentElement.classList.toggle("error", error);
 }
+let nativeJobId;
 function newWorker() {
   workerEpoch++;
   worker = new Worker(new URL("./worker.js", import.meta.url), {
@@ -56,11 +57,13 @@ function newWorker() {
   });
   worker.onmessage = ({ data }) => {
     if (data.progress !== undefined) {
+      if (data.nativeJobId) nativeJobId = data.nativeJobId;
       $("progress").value = data.progress;
       status(data.text);
       return;
     }
     const p = pending.get(data.id);
+    nativeJobId = undefined;
     if (!p) return;
     pending.delete(data.id);
     data.error ? p.reject(Error(data.error)) : p.resolve(data.result);
@@ -1180,6 +1183,11 @@ $("projectFile").onchange = () =>
     );
   });
 $("cancelBtn").onclick = () => {
+  if (nativeJobId)
+    fetch("http://127.0.0.1:8788/jobs/" + nativeJobId, {
+      method: "DELETE",
+    }).catch(() => {});
+  nativeJobId = undefined;
   worker.terminate();
   for (const p of pending.values())
     p.reject(Error("Operation canceled. Generate again to resume editing."));

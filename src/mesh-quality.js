@@ -409,13 +409,59 @@ function improvePlanarEdges(p, tris, maxPasses = 8, tolerance = 0) {
 export function prepareMesh(
   raw,
   tolerance = 0,
-  { collapse = true, flip = true } = {},
+  {
+    collapse = true,
+    flip = true,
+    precision = "single",
+    regularizeTiny = false,
+  } = {},
 ) {
   let p = Array.from(raw.positions);
   let tris = Array.from({ length: raw.indices.length / 3 }, (_, i) =>
     Array.from(raw.indices.slice(i * 3, i * 3 + 3)),
   );
   const before = meshQuality(raw);
+  if (regularizeTiny && tolerance > 0 && !before.invalidFaces) {
+    const original = p.slice(),
+      parent = Array.from({ length: p.length / 3 }, (_, i) => i),
+      members = new Map();
+    const root = (i) => (parent[i] === i ? i : (parent[i] = root(parent[i])));
+    for (const t of tris) {
+      const f = face(p, t);
+      if (f.quality >= 0.01 && f.doubleArea > 1e-10) continue;
+      let pair = null,
+        length = Infinity;
+      for (let k = 0; k < 3; k++) {
+        const a = root(t[k]),
+          b = root(t[(k + 1) % 3]);
+        if (a === b) continue;
+        const d = Math.hypot(
+          ...sub(p.slice(a * 3, a * 3 + 3), p.slice(b * 3, b * 3 + 3)),
+        );
+        if (d < length) {
+          length = d;
+          pair = [a, b];
+        }
+      }
+      if (!pair || length > tolerance * 2) continue;
+      const [a, b] = pair,
+        group = [...(members.get(a) || [a]), ...(members.get(b) || [b])];
+      const midpoint = [0, 1, 2].map((k) => (p[a * 3 + k] + p[b * 3 + k]) / 2);
+      if (
+        group.some(
+          (i) =>
+            Math.hypot(...sub(original.slice(i * 3, i * 3 + 3), midpoint)) >
+            tolerance,
+        )
+      )
+        continue;
+      parent[b] = a;
+      members.set(a, group);
+      members.delete(b);
+      for (const i of group)
+        for (let k = 0; k < 3; k++) p[i * 3 + k] = midpoint[k];
+    }
+  }
   if (before.degenerateFaces && !before.invalidFaces && before.finite) {
     const repaired = repairZeroEdges(p, tris);
     if (repaired) {
@@ -427,11 +473,8 @@ export function prepareMesh(
     ? collapseRoundingEdges(p, tris, tolerance)
     : { tris, collapsed: 0 };
   tris = cleaned.tris;
-  // A collapsed tetrahedral sliver can leave an isolated pair of opposite
-  // coincident faces. Remove the zero-volume component only when all its edges
-  // belong to that pair; never remove a face from the surrounding solid.
-  const edgeMap = adjacency(tris),
-    duplicates = new Map(),
+  // Cancel opposite coincident faces as a zero-volume oriented membrane.
+  const duplicates = new Map(),
     remove = new Set();
   tris.forEach((t, i) => {
     const id = t
@@ -442,22 +485,39 @@ export function prepareMesh(
       duplicates.set(id, i);
       return;
     }
-    const j = duplicates.get(id);
-    if (t.every((a, k) => edgeMap.get(key(a, t[(k + 1) % 3])).length === 2)) {
+    const j = duplicates.get(id),
+      other = tris[j];
+    const opposite = [0, 1, 2].some(
+      (k) =>
+        t[0] === other[k] &&
+        t[1] === other[(k + 2) % 3] &&
+        t[2] === other[(k + 1) % 3],
+    );
+    // Opposite coincident triangles cancel as an oriented surface chain. This
+    // removes only zero-thickness internal membranes, with zero volume change.
+    if (opposite) {
       remove.add(i);
       remove.add(j);
+      duplicates.delete(id);
     }
   });
   tris = tris.filter((_, i) => !remove.has(i));
   if (flip) improvePlanarEdges(p, tris, 16);
   return {
-    positions: new Float32Array(p),
+    positions:
+      precision === "double" ? new Float64Array(p) : new Float32Array(p),
     indices: new Uint32Array(tris.flat()),
   };
 }
 export function conditionMesh(
   raw,
-  { targetLength, tolerance = 0, maxTriangles = 400000, rounds = 3 } = {},
+  {
+    targetLength,
+    tolerance = 0,
+    maxTriangles = 400000,
+    rounds = 3,
+    allowTiny = false,
+  } = {},
 ) {
   const p = Array.from(raw.positions);
   let tris = Array.from({ length: raw.indices.length / 3 }, (_, i) =>
@@ -471,7 +531,7 @@ export function conditionMesh(
     !initial.finite ||
     initial.invalidFaces ||
     initial.duplicateFaces ||
-    initial.degenerateFaces ||
+    (initial.degenerateFaces && !allowTiny) ||
     initial.boundaryEdges ||
     initial.nonManifoldEdges ||
     initial.inconsistentEdges
@@ -569,7 +629,7 @@ export function conditionMesh(
   // Float32 midpoint rounding may collapse microscopic edges. Keep the original
   // checked mesh rather than exporting a remesher-induced hole or zero-area face.
   if (
-    after.degenerateFaces ||
+    after.degenerateFaces > (allowTiny ? before.degenerateFaces : 0) ||
     after.duplicateFaces ||
     after.boundaryEdges ||
     after.nonManifoldEdges ||

@@ -2,6 +2,7 @@ import Module from "manifold-3d";
 import wasmURL from "manifold-3d/manifold.wasm?url";
 import { BalloonEngine } from "./engine.js";
 import { GeometryHistory } from "./history.js";
+import { precisionOutput } from "./precision-client.js";
 let engine;
 let cachedOutput;
 const history = new GeometryHistory(20);
@@ -70,13 +71,21 @@ self.onmessage = async ({ data }) => {
       if (cachedOutput?.engine === engine && cachedOutput.key === key)
         result = cachedOutput.result;
       else {
-        result = engine.output(
-          data.mode,
-          data.tolerance,
-          data.quality || "final",
-          (progress, text) => postMessage({ id, progress, text }),
-          data.resolution || 160,
-        );
+        result =
+          data.quality === "precision" && data.mode !== "shell"
+            ? await precisionOutput(
+                engine,
+                data.tolerance,
+                (progress, text, nativeJobId) =>
+                  postMessage({ id, progress, text, nativeJobId }),
+              )
+            : engine.output(
+                data.mode,
+                data.tolerance,
+                data.quality || "final",
+                (progress, text) => postMessage({ id, progress, text }),
+                data.resolution || 160,
+              );
         cachedOutput = { engine, key, result };
       }
     } else throw Error("Unknown operation");

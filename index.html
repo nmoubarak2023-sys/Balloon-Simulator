@@ -441,6 +441,9 @@
                   </div>
                   <label for="outputQuality">Boolean quality</label>
                   <select id="outputQuality">
+                    <option value="precision">
+                      Precision / thin walls (local engine)
+                    </option>
                     <option value="rebuild">
                       Rebuild surface / approximate
                     </option>
@@ -449,6 +452,11 @@
                     </option>
                     <option value="preview">Preview / repair only</option>
                   </select>
+                  <p class="note">
+                    Precision requires Start-Balloon-Precision.cmd on this
+                    computer. It retains the contact-gap setting and uses
+                    tolerance-scale numerical repairs.
+                  </p>
                   <label for="rebuildResolution">Rebuild resolution</label>
                   <select id="rebuildResolution">
                     <option value="96">96 / quick comparison</option>
