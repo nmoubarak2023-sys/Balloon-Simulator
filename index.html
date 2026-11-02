@@ -441,11 +441,27 @@
                   </div>
                   <label for="outputQuality">Boolean quality</label>
                   <select id="outputQuality">
-                    <option value="final">
+                    <option value="rebuild">
+                      Rebuild surface / approximate
+                    </option>
+                    <option value="final" selected>
                       Final / repair and retriangulate
                     </option>
                     <option value="preview">Preview / repair only</option>
                   </select>
+                  <label for="rebuildResolution">Rebuild resolution</label>
+                  <select id="rebuildResolution">
+                    <option value="96">96 / quick comparison</option>
+                    <option value="160" selected>160 / balanced</option>
+                    <option value="224">224 / finer detail</option>
+                    <option value="256">256 / dense</option>
+                  </select>
+                  <p class="note">
+                    Rebuild creates a new surface from the occupied volume. It
+                    avoids CSG triangle fans, but fine walls, gaps and sharp
+                    details are limited by the grid size. Original balloons
+                    remain unchanged.
+                  </p>
                   <button id="outputBtn" class="primary">BUILD OUTPUT ↗</button>
                   <button id="exportQuality">DOWNLOAD QUALITY REPORT</button>
                   <p id="outputStatus" class="note">

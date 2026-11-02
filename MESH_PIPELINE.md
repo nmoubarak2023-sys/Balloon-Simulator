@@ -88,3 +88,41 @@ Do not interpret a passing edge-topology check, small net volume change, or a
 zero audit count as a general geometric-validity guarantee. Do not label this
 sample fully fixed or watertight for fabrication without resolving its residual
 geometric warnings and inspecting the exported solid.
+
+## Optional volume reconstruction
+
+The separate **Rebuild surface / approximate** option bypasses the old CSG
+tessellation. It classifies the original container minus the union of all balloon
+volumes using grouped, oriented scanline intersections. A nearest-surface signed
+field is evaluated in active cells. Consistently split tetrahedral cells extract
+a new conforming mesh with shared intersection vertices; no original long fan
+triangles are reused. This is a sampled field, not a claim of an exact Euclidean
+signed distance field or an adaptive octree.
+
+The method retains the input geometry as editable source data. It exposes grid
+resolution, model-unit cell size, and explicit warnings about small walls/gaps.
+The extraction regularizes field magnitudes by 1% of a cell to prevent vanishing
+triangles at grid vertices. No smoothing pass follows extraction. Individual
+triangles lie within one grid cell, bounding their longest edge by sqrt(3) times
+the cell size. Grid memory and output triangle count are limited; work remains
+in the cancellable Worker. Rebuilding unchanged output uses the existing cache.
+
+On the supplied project at resolution 160, a 0.7506-unit cell yields 385,000
+triangles, zero degenerate/duplicate/non-manifold faces, and zero proper crossings
+in a completed 8.9-million-pair audit. The maximum inverse mean-ratio aspect is
+105.6 instead of tens of millions, and the longest edge is 1.279 model units.
+Rhino serialization retains identical reconstructed coordinates/connectivity.
+These checks do not certify coplanar overlap or universal fabrication readiness.
+
+**This option changes the geometry.** Sample volume is approximately 1.426% below
+the exact solid reference. Thin walls can be lost, perforated, or aliased when
+under-resolved. The project's 0.08321-unit contact gap is much smaller than this
+grid; increasing resolution from 160 to 256 still cannot reliably preserve that
+gap. Surface creases and corners are also limited by the grid scale. Do not use
+this reconstruction as an exact replacement when those details must remain.
+Preserving such walls calls for a substantially larger resolution/error budget,
+thicker intentional walls, or another geometry backend. The original Boolean
+options remain available and are not silently replaced.
+
+`node scripts/rebuild-project.mjs <project.json> [resolution] [output-directory]`
+writes a reconstructed Rhino file and explicit approximation/validation report.

@@ -65,6 +65,7 @@ self.onmessage = async ({ data }) => {
         data.mode,
         data.tolerance,
         data.quality || "final",
+        data.resolution || 160,
       ]);
       if (cachedOutput?.engine === engine && cachedOutput.key === key)
         result = cachedOutput.result;
@@ -74,6 +75,7 @@ self.onmessage = async ({ data }) => {
           data.tolerance,
           data.quality || "final",
           (progress, text) => postMessage({ id, progress, text }),
+          data.resolution || 160,
         );
         cachedOutput = { engine, key, result };
       }

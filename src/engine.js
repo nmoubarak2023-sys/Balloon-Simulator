@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { MeshBVH } from "three-mesh-bvh";
 import { lifecycleMethods } from "./lifecycle.js";
 import { buildCavities } from "./boolean-pipeline.js";
+import { rebuildVolume } from "./volume-remesh.js";
 
 export function random(seed) {
   let a = seed >>> 0;
@@ -569,7 +570,13 @@ export class BalloonEngine {
   snapshot() {
     return this.session();
   }
-  output(mode, tolerance, quality = "final", progress = () => {}) {
+  output(
+    mode,
+    tolerance,
+    quality = "final",
+    progress = () => {},
+    resolution = 160,
+  ) {
     if (!this.boundary)
       throw Error("Generate a field before building an output.");
     if (mode === "shell")
@@ -578,7 +585,10 @@ export class BalloonEngine {
         shells: [this.rawBoundary, ...this.balloons.map((s) => this.raw(s))],
         message: `Shell assembly: ${this.balloons.length + 1} separate shells. No material removed.`,
       };
-    const diagnostics = buildCavities(this, tolerance, quality, progress);
+    const diagnostics =
+      quality === "rebuild"
+        ? rebuildVolume(this, resolution, progress)
+        : buildCavities(this, tolerance, quality, progress);
     const raw = diagnostics.raw,
       checks = topology(raw),
       incomplete =
@@ -591,12 +601,14 @@ export class BalloonEngine {
       shells: [raw],
       checks,
       quality,
+      resolution: diagnostics.resolution,
       qualityWarning:
         diagnostics.after.stretchedFaces > 0 ||
-        diagnostics.after.degenerateFaces > 0,
+        diagnostics.after.degenerateFaces > 0 ||
+        !!diagnostics.approximation,
       diagnostics: { ...diagnostics, raw: undefined },
       incomplete,
-      message: `${incomplete ? "Boolean available for export with warnings" : "Boolean topology verified"} · Valid: ${checks.valid ? "yes" : "no"} · Closed: ${checks.closed ? "yes" : "no"} · Manifold: ${checks.manifold ? "yes" : "no"} · Degenerate: ${diagnostics.after.degenerateFaces} · Stretched: ${diagnostics.after.stretchedFaces} · Max aspect: ${Number.isFinite(diagnostics.after.maxAspect) ? diagnostics.after.maxAspect.toFixed(1) : "unbounded"} · Suspected crossings: ${diagnostics.intersectionAudit?.properCrossings ?? "not checked"}${diagnostics.after.stretchedFaces ? ". Thin-feature triangles remain; surface quality is not certified." : ""}${incomplete ? " Export is allowed with warnings; separate input shells are preserved." : ""}`,
+      message: `${diagnostics.approximation ? "Volume rebuild / approximate" : incomplete ? "Boolean available for export with warnings" : "Boolean topology verified"} · Closed: ${checks.closed ? "yes" : "no"} · Manifold: ${checks.manifold ? "yes" : "no"} · Degenerate: ${diagnostics.after.degenerateFaces} · Stretched: ${diagnostics.after.stretchedFaces} · Max aspect: ${Number.isFinite(diagnostics.after.maxAspect) ? diagnostics.after.maxAspect.toFixed(1) : "unbounded"} · Suspected crossings: ${diagnostics.intersectionAudit?.properCrossings ?? "not checked"}${diagnostics.intersectionAudit?.truncated ? " (partial audit)" : ""}${diagnostics.approximation ? ` · Cell size: ${diagnostics.cellSize.toPrecision(3)}. ${diagnostics.featureWarning}` : diagnostics.after.stretchedFaces ? ". Thin-feature triangles remain; surface quality is not certified." : ""}${incomplete ? " Export is allowed with warnings; separate input shells are preserved." : ""}`,
     };
   }
 }

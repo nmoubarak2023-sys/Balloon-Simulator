@@ -769,7 +769,10 @@ function currentOutput() {
   if (
     $("outputMode").value !== output.mode ||
     Number($("tolerance").value) !== output.tolerance ||
-    (output.mode === "boolean" && $("outputQuality").value !== output.quality)
+    (output.mode === "boolean" &&
+      $("outputQuality").value !== output.quality) ||
+    (output.quality === "rebuild" &&
+      Number($("rebuildResolution").value) !== output.resolution)
   )
     throw Error("Output settings changed. Build the output again.");
   return output;
@@ -992,6 +995,7 @@ $("outputBtn").onclick = () =>
         mode: $("outputMode").value,
         tolerance: p.tolerance,
         quality: $("outputQuality").value,
+        resolution: Number($("rebuildResolution").value),
       });
     output = { ...r, tolerance: p.tolerance };
     $("outputStatus").textContent = r.message;
@@ -1008,6 +1012,7 @@ $("outputMode").onchange = () => {
 };
 $("tolerance").oninput = invalidate;
 $("outputQuality").onchange = invalidate;
+$("rebuildResolution").onchange = invalidate;
 $("exportQuality").onclick = () =>
   task("Preparing mesh quality report…", async () => {
     const o = currentOutput();
