@@ -966,15 +966,28 @@ footer {
   font-size: 10px;
   min-height: 31px;
   padding: 7px 13px;
+  border: 0;
+  background: transparent;
+  color: #21e0ed80;
+  font-weight: 700;
+}
+.balloon-actions button:hover:not(:disabled),
+.balloon-actions button:active:not(:disabled),
+.balloon-actions button[aria-pressed="true"] {
+  background: transparent;
+  color: var(--cyan);
+}
+.balloon-actions button:focus-visible {
+  outline: 1px solid var(--cyan);
+  outline-offset: 3px;
 }
 .balloon-actions .pop-button {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: #dc24f480;
 }
-.balloon-actions .pop-button:hover:not(:disabled) {
+.balloon-actions .pop-button:hover:not(:disabled),
+.balloon-actions .pop-button:active:not(:disabled) {
   color: var(--accent);
-  border-color: var(--accent);
-  background: #dc24f41a;
+  background: transparent;
 }
 .balloon-actions label {
   display: grid;
