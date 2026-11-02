@@ -650,7 +650,7 @@ main {
   z-index: 1;
 }
 .frame-outer {
-  fill: #0b1213;
+  fill: none;
   stroke: var(--cyan);
   stroke-width: 1;
   stroke-opacity: 0.72;
@@ -679,7 +679,7 @@ main {
 .panel-heading {
   height: 37px;
   padding: 0 13px;
-  background: transparent;
+  background: #0b1213;
   border-bottom: 1px solid #21e0ed22;
   color: #d2eeef;
   font-size: 9px;
@@ -718,7 +718,7 @@ button,
   min-height: 760px;
 }
 #viewport {
-  background: #0b1213;
+  background: transparent;
 }
 #viewport::after {
   content: "";
@@ -753,7 +753,7 @@ aside {
 }
 #planViewport {
   height: 174px;
-  background: #0b1213;
+  background: transparent;
 }
 .plan-hint {
   font-size: 7px;

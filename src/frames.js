@@ -2,6 +2,11 @@
 export function addTechnicalFrames() {
   const ns = "http://www.w3.org/2000/svg";
   document.querySelectorAll(".panel").forEach((panel) => {
+    const filledCount = panel.classList.contains("viewer-panel")
+      ? 1
+      : panel.classList.contains("plan-panel")
+        ? 2
+        : 3;
     const svg = document.createElementNS(ns, "svg");
     svg.classList.add("technical-frame");
     svg.setAttribute("aria-hidden", "true");
@@ -16,7 +21,7 @@ export function addTechnicalFrames() {
       trace = make("path", { class: "frame-trace" });
     const bars = Array.from({ length: 5 }, (_, i) =>
       make("rect", {
-        class: i < 3 ? "frame-bar filled" : "frame-bar",
+        class: i < filledCount ? "frame-bar filled" : "frame-bar",
         width: 4,
         height: 7,
       }),
