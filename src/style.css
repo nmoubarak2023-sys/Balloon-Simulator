@@ -693,13 +693,23 @@ main {
   border-bottom: 1px solid #21e0ed2b;
 }
 .canvas-tools button {
-  border-color: #21e0ed55;
-  color: #a9dadc;
+  border: 0;
+  background: transparent;
+  color: #21e0ed80;
+  font-weight: 700;
   letter-spacing: 0.1em;
 }
+.canvas-tools button:hover:not(:disabled) {
+  background: transparent;
+  color: #21e0edbb;
+}
 .canvas-tools button[aria-pressed="true"] {
-  background: #21e0ed15;
-  border-color: var(--cyan);
+  background: transparent;
+  color: var(--cyan);
+}
+.canvas-tools button:focus-visible {
+  outline: 1px solid var(--cyan);
+  outline-offset: 3px;
 }
 button,
 .button {
@@ -721,14 +731,7 @@ button,
   background: transparent;
 }
 #viewport::after {
-  content: "";
-  position: absolute;
-  left: 14px;
-  bottom: 47px;
-  width: 55px;
-  height: 55px;
-  border: 1px solid #21e0ed28;
-  pointer-events: none;
+  content: none;
 }
 .viewer-footer {
   height: 31px;

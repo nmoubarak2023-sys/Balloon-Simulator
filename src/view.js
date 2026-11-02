@@ -519,10 +519,6 @@ export class StudioView {
       m.add(wire);
       this.field.add(m);
     });
-    const grid = new T.GridHelper(this.span * 1.65, 16, 0x1d434a, 0x112a30);
-    grid.rotation.x = Math.PI / 2;
-    grid.position.set(b.center[0], b.center[1], b.min[2] - this.span * 0.03);
-    this.field.add(grid);
     this.plan.position.set(b.center[0], b.center[1], b.max[2] + this.span * 4);
     this.plan.lookAt(...b.center);
     this.plan.far = this.span * 20;
