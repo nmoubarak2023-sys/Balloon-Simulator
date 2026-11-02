@@ -61,6 +61,13 @@
             <button data-canvas-tool="clipRotate" aria-pressed="false">
               ROTATE CLIP
             </button>
+            <button
+              id="clipToggle"
+              aria-pressed="false"
+              aria-label="Clipping plane on or off"
+            >
+              CLIP OFF
+            </button>
             <span id="selectionInfo" aria-live="polite"
               >CLICK A BALLOON TO SELECT</span
             >
@@ -117,7 +124,9 @@
                 <option value="90" selected>90°</option>
               </select></label
             >
-            <span>WORLD AXES · ABOUT MESH CENTER</span>
+            <span id="rotationContext"
+              >BOUNDARY · WORLD AXES · ABOUT MESH CENTER</span
+            >
           </div>
           <div id="viewport">
             <div class="viewport-label">

@@ -208,8 +208,7 @@ export class StudioView {
     this.proxy.scale.setScalar(1);
     this.proxy.updateMatrixWorld();
     this.transform.setMode(mode);
-    if (this.tool === "clipRotate") this.transform.setRotationSnap?.(null);
-    else if (this.tool === "boundary") {
+    if (this.tool === "boundary" || this.tool === "clipRotate") {
       const degrees = Number(
         document.getElementById("rotationSnap")?.value || 0,
       );
@@ -761,6 +760,13 @@ export class StudioView {
       position: [...state.position],
       quaternion: [...state.quaternion],
     };
+    const toggle = document.getElementById("clipToggle");
+    if (toggle) {
+      toggle.textContent = state.enabled ? "CLIP ON" : "CLIP OFF";
+      toggle.setAttribute("aria-pressed", String(!!state.enabled));
+    }
+    const checkbox = document.getElementById("clippingEnabled");
+    if (checkbox) checkbox.checked = !!state.enabled;
     const normal = new T.Vector3(0, 0, 1).applyQuaternion(
       new T.Quaternion().fromArray(state.quaternion),
     );

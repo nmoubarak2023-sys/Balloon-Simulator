@@ -7,8 +7,32 @@ import {
   draggedEdit,
   uniformFactor,
   rotationMatrix,
+  rotateClippingPlane,
 } from "../src/interaction.js";
 import { BalloonEngine, topology } from "../src/engine.js";
+test("exact clipping increments rotate about world axes without moving or enabling the plane", () => {
+  const start = {
+    enabled: false,
+    position: [12, -3, 8],
+    quaternion: [0, 0, 0, 1],
+  };
+  const quarter = rotateClippingPlane(start, "X", 90);
+  const normal = new Vector3(0, 0, 1).applyQuaternion(
+    new Quaternion().fromArray(quarter.quaternion),
+  );
+  assert(normal.distanceTo(new Vector3(0, -1, 0)) < 1e-12);
+  assert.deepEqual(quarter.position, start.position);
+  assert.equal(quarter.enabled, false);
+  let state = start;
+  for (let i = 0; i < 4; i++) state = rotateClippingPlane(state, "Y", 90);
+  assert(
+    new Vector3(0, 0, 1)
+      .applyQuaternion(new Quaternion().fromArray(state.quaternion))
+      .distanceTo(new Vector3(0, 0, 1)) < 1e-12,
+  );
+  assert.throws(() => rotateClippingPlane(start, "Q", 90));
+  assert.throws(() => rotateClippingPlane(start, "X", NaN));
+});
 test("exact degree presets rotate about the model center on each world axis", () => {
   const raw = {
       positions: new Float32Array([12, 23, 34]),

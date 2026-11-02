@@ -7,6 +7,7 @@ import { StudioView, geometry, rawGeometry } from "./view.js";
 import { bounds, canonical } from "./engine.js";
 import { rhinoRaw, addRhinoMesh } from "./rhino-io.js";
 import { transformMesh, draggedEdit, rotationMatrix } from "./interaction.js";
+import { rotateClippingPlane } from "./interaction.js";
 import { addTechnicalFrames } from "./frames.js";
 import { UndoJournal, isUndoShortcut } from "./history.js";
 import { meshQuality } from "./mesh-quality.js";
@@ -238,6 +239,9 @@ function uiSignature(state) {
   return JSON.stringify({
     controls: state.controls,
     points: state.points,
+    curves: state.curves,
+    activeCurve: state.activeCurve,
+    clipping: state.clipping,
     fileName: state.fileName,
     output: state.output
       ? {
@@ -299,7 +303,7 @@ function restoreUI(context, result) {
   $("fileName").textContent = fileName;
   view.selectedCurve = Number(context.controls.curvePoint.value) || 0;
   view.setTool(context.tool);
-  $("exactRotation").hidden = context.tool !== "boundary";
+  rotationControls(context.tool);
   $("curveEditBtn").setAttribute("aria-pressed", editCurve);
   $("meshSelect").replaceChildren(
     ...meshChoices.map((mesh, i) => new Option(mesh.name, i)),
@@ -545,18 +549,25 @@ const view = new StudioView(
   },
   onCanvasTransform,
 );
+function rotationControls(tool) {
+  $("exactRotation").hidden = !["boundary", "clipRotate"].includes(tool);
+  $("rotationContext").textContent =
+    tool === "clipRotate"
+      ? "CLIPPING PLANE · WORLD AXES · ABOUT PLANE CENTER"
+      : "BOUNDARY · WORLD AXES · ABOUT MESH CENTER";
+}
 function activateTool(tool) {
   if (busy) return;
   if (output?.mode === "boolean" && !tool.startsWith("clip")) invalidate();
   if (tool === "boundary") $("showBoundary").checked = true;
-  $("exactRotation").hidden = tool !== "boundary";
+  rotationControls(tool);
   editCurve = tool === "curve";
   if (tool.startsWith("clip") && !view.clipState?.enabled) {
     $("clippingEnabled").checked = true;
     view.setClip({
       enabled: true,
-      position: bounds(boundary).center,
-      quaternion: [0, 0, 0, 1],
+      position: view.clipState?.position || bounds(boundary).center,
+      quaternion: view.clipState?.quaternion || [0, 0, 0, 1],
     });
   }
   $("curveEditBtn").setAttribute("aria-pressed", editCurve);
@@ -639,6 +650,15 @@ function exactRotation(degrees) {
       axis = $("rotationAxis").value;
     if (angle % 360 === 0) {
       status("No orientation change: rotation is a multiple of 360°.");
+      return;
+    }
+    if (view.tool === "clipRotate") {
+      const before = captureUI();
+      view.setClip(rotateClippingPlane(view.clipState, axis, angle));
+      recordUI(before, "Rotate clipping plane");
+      status(
+        `Clipping plane rotated ${angle}° about world ${axis}. Export geometry is unchanged.`,
+      );
       return;
     }
     activateTool("boundary");
@@ -1011,7 +1031,20 @@ $("clippingEnabled").onchange = () => {
     position: view.clipState?.position || bounds(boundary).center,
     quaternion: view.clipState?.quaternion || [0, 0, 0, 1],
   });
-  if ($("clippingEnabled").checked) activateTool("clipMove");
+  if ($("clippingEnabled").checked && !view.tool.startsWith("clip"))
+    activateTool("clipMove");
+};
+$("clipToggle").onclick = () => {
+  if (busy) return;
+  const before = captureUI();
+  $("clippingEnabled").checked = !view.clipState?.enabled;
+  $("clippingEnabled").onchange();
+  recordUI(before, "Toggle clipping plane");
+  status(
+    view.clipState.enabled
+      ? "Clipping on."
+      : "Clipping off. Plane position and rotation retained.",
+  );
 };
 $("resetClip").onclick = () => {
   view.setClip({

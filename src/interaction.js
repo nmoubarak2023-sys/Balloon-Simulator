@@ -1,4 +1,27 @@
-import { Matrix4, Vector3 } from "three";
+import { Matrix4, Vector3, Quaternion } from "three";
+
+export function rotateClippingPlane(state, axis, degrees) {
+  if (!["X", "Y", "Z"].includes(axis) || !Number.isFinite(degrees))
+    throw Error("Choose an axis and enter finite degrees.");
+  const direction = new Vector3(
+    axis === "X" ? 1 : 0,
+    axis === "Y" ? 1 : 0,
+    axis === "Z" ? 1 : 0,
+  );
+  const rotation = new Quaternion().setFromAxisAngle(
+    direction,
+    ((degrees % 360) * Math.PI) / 180,
+  );
+  return {
+    ...state,
+    position: [...state.position],
+    quaternion: new Quaternion()
+      .fromArray(state.quaternion)
+      .premultiply(rotation)
+      .normalize()
+      .toArray(),
+  };
+}
 
 export function rotationMatrix(center, axis, degrees) {
   if (!["X", "Y", "Z"].includes(axis) || !Number.isFinite(degrees))
