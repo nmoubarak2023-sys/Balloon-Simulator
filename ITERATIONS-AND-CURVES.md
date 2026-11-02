@@ -1,0 +1,9 @@
+# Curves, clipping and iterations
+
+Curve Pressure supports one to five independent attractors. Add or remove curves, select a curve from the list, or import a Rhino file containing up to five curves. Pink curves remain visible through balloons. MOVE CURVE translates the complete curve by dragging its stroke or axis arrows; CURVE POINTS adjusts individual points in either canvas. Axis arrows in perspective also move along Z. All curves share strength and influence distance; pressure uses the nearest curve without joining unrelated endpoints. Checking or unchecking Enable pressure immediately regenerates the field. Pressure regeneration preserves frozen shapes and lifecycle groups and resets unfrozen manual edits, as before.
+
+MOVE CLIP activates a view-only clipping plane. Drag its surface or translation arrows. ROTATE CLIP uses continuous rotation rings. Disable Clipping plane to restore the full view, or reset it to the model center. Clipping works in both canvases, including Boolean previews, and does not cut exported geometry.
+
+SAVE ITERATION stores a named snapshot in IndexedDB on the current browser and site origin. LOAD ITERATION restores accepted geometry, curves, settings, clipping position/orientation and lifecycle state. SHOW NUMERICAL DATA shows settings, curve coordinates, balloon centers and offsets, bounding dimensions, membership, freeze state and mesh counts. Generated settings and unapplied current controls are recorded separately. DOWNLOAD ITERATION JSON creates a portable project backup, compatible with OPEN PROJECT. Existing version 1 and 2 project files remain supported; new saves use version 3.
+
+Browser storage is not shared between localhost and the public website, different browsers, or devices. Clearing site data removes local snapshots; download JSON to preserve or share them. The mesh pipeline retains its existing numerical limitations; these editing features do not certify Boolean surface quality.

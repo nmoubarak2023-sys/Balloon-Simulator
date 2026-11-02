@@ -10,6 +10,20 @@ import { transformMesh, draggedEdit, rotationMatrix } from "./interaction.js";
 import { addTechnicalFrames } from "./frames.js";
 import { UndoJournal, isUndoShortcut } from "./history.js";
 import { meshQuality } from "./mesh-quality.js";
+import {
+  validateCurves,
+  iterationStore,
+  iterationSummary,
+} from "./iterations.js";
+let curves = [],
+  activeCurve = 0;
+function allCurves() {
+  curves[activeCurve] = points;
+  return curves;
+}
+function drawCurves() {
+  view.curve(points, editCurve, true, allCurves(), activeCurve);
+}
 const $ = (id) => document.getElementById(id),
   paramsIDs = [
     "count",
@@ -169,6 +183,8 @@ async function task(message, fn) {
       )
       .forEach((e) => (e.disabled = false));
     updateActionButtons();
+    $("addCurve").disabled = curves.length >= 5;
+    $("removeCurve").disabled = curves.length <= 1;
     if (
       !undoing &&
       succeeded &&
@@ -192,6 +208,9 @@ function captureUI() {
     fileName,
     meshChoices,
     points: points.map((p) => p.slice()),
+    curves: allCurves().map((c) => c.map((p) => p.slice())),
+    activeCurve,
+    clipping: view.clipState ? structuredClone(view.clipState) : null,
     configUsed,
     curveUsed,
     selected,
@@ -264,6 +283,11 @@ function restoreUI(context, result) {
     if (typeof data.checked === "boolean") el.checked = data.checked;
   }
   points = context.points.map((p) => p.slice());
+  curves = (context.curves || [points]).map((c) => c.map((p) => p.slice()));
+  activeCurve = context.activeCurve || 0;
+  points = curves[activeCurve];
+  if (context.clipping) view.setClip(context.clipping);
+  else if (view.clipState) view.setClip({ ...view.clipState, enabled: false });
   fileName = context.fileName;
   meshChoices = context.meshChoices;
   configUsed = context.configUsed;
@@ -417,7 +441,8 @@ function syncDisplay(result, fit = false) {
   $("meshStats").textContent =
     `${result.balloons.length} BALLOONS / ${triangles.toLocaleString()} TRIANGLES`;
   $("fieldLabel").textContent = fileName.toUpperCase();
-  view.curve(points, editCurve, $("pressureEnabled").checked || editCurve);
+  drawCurves();
+  if (view.clipState) view.setClip(view.clipState);
   if (result.canAdjustPop && result.popStrength !== undefined) {
     $("popPressure").value = Math.round(result.popStrength * 100);
     $("popPressureValue").value = `${$("popPressure").value}%`;
@@ -506,11 +531,15 @@ const view = new StudioView(
       select(i, additive);
     }
   },
-  (p, i) => {
+  (p, i, curveIndex = activeCurve) => {
     if (busy) return;
+    activeCurve = curveIndex;
     points = p;
-    view.curve(points, editCurve, true);
-    $("curvePoint").value = i;
+    curves[activeCurve] = p;
+    editCurve = view.tool === "curve";
+    drawCurves();
+    $("curveSelect").value = activeCurve;
+    if (i >= 0) $("curvePoint").value = i;
     showPoint();
     markCurveDirty();
   },
@@ -518,11 +547,18 @@ const view = new StudioView(
 );
 function activateTool(tool) {
   if (busy) return;
-  if (output?.mode === "boolean") invalidate();
+  if (output?.mode === "boolean" && !tool.startsWith("clip")) invalidate();
   if (tool === "boundary") $("showBoundary").checked = true;
   $("exactRotation").hidden = tool !== "boundary";
   editCurve = tool === "curve";
-  if (editCurve) $("pressureEnabled").checked = true;
+  if (tool.startsWith("clip") && !view.clipState?.enabled) {
+    $("clippingEnabled").checked = true;
+    view.setClip({
+      enabled: true,
+      position: bounds(boundary).center,
+      quaternion: [0, 0, 0, 1],
+    });
+  }
   $("curveEditBtn").setAttribute("aria-pressed", editCurve);
   view.setTool(tool);
   curveUI();
@@ -535,6 +571,13 @@ document
       (button.onclick = () => activateTool(button.dataset.canvasTool)),
   );
 function onCanvasTransform(change) {
+  if (change.type === "clip") {
+    const before = captureUI();
+    before.clipping = view.startClip;
+    recordUI(before, "Move clipping plane");
+    status("Clipping view updated. Export geometry is unchanged.");
+    return;
+  }
   if (change.type === "cancel") {
     if (display) syncDisplay(display);
     return;
@@ -560,10 +603,12 @@ function onCanvasTransform(change) {
         if ($("pressureEnabled").checked) {
           await generate();
           status(
-            "Curve point moved. Pressure applied; frozen shapes retained and unfrozen edits reset.",
+            `${change.whole ? "Curve" : "Curve point"} moved. Pressure applied; frozen shapes retained and unfrozen edits reset.`,
           );
         } else
-          status("Curve point moved. Enable pressure to deform the balloons.");
+          status(
+            `${change.whole ? "Curve" : "Curve point"} moved. Enable pressure to deform the balloons.`,
+          );
       } else if (change.type === "balloon") {
         const edit = draggedEdit(
           display.edits[change.index],
@@ -641,13 +686,20 @@ function resetCurve() {
   curveUI();
 }
 function curveUI() {
+  allCurves();
+  $("curveSelect").replaceChildren(
+    ...curves.map((_, i) => new Option(`CURVE ${i + 1}`, i)),
+  );
+  $("curveSelect").value = activeCurve;
+  $("addCurve").disabled = curves.length >= 5;
+  $("removeCurve").disabled = curves.length <= 1;
   const last = Number($("curvePoint").value) || 0;
   $("curvePoint").replaceChildren(
     ...points.map((_, i) => new Option(`POINT ${i + 1}`, i)),
   );
   $("curvePoint").value = Math.min(last, points.length - 1);
   showPoint();
-  view.curve(points, editCurve, $("pressureEnabled").checked || editCurve);
+  drawCurves();
 }
 function showPoint() {
   const p = points[Number($("curvePoint").value)] || [0, 0, 0];
@@ -660,7 +712,7 @@ function markCurveDirty() {
 }
 async function generate(fit = false, preserve = true) {
   const p = params();
-  const curve = view.samples(points);
+  const curve = validateCurves(allCurves()).map((c) => view.samples(c));
   const r = await request("generate", { boundary, params: p, curve, preserve });
   needsRestore = false;
   configUsed = p;
@@ -671,6 +723,8 @@ async function generate(fit = false, preserve = true) {
   );
 }
 function demo() {
+  curves = [];
+  activeCurve = 0;
   const g = new T.BoxGeometry(120, 90, 65);
   boundary = canonical(rawGeometry(g));
   g.dispose();
@@ -743,6 +797,8 @@ async function readMeshes(file) {
   return items;
 }
 async function loadBoundary(raw, name) {
+  curves = [];
+  activeCurve = 0;
   const checked = canonical(raw);
   boundary = checked;
   fileName = name;
@@ -916,6 +972,54 @@ $("curvePoint").onchange = () => {
   showPoint();
   view.attachTool();
 };
+$("curveSelect").onchange = () => {
+  allCurves();
+  activeCurve = Number($("curveSelect").value);
+  points = curves[activeCurve];
+  view.selectedCurve = 0;
+  curveUI();
+};
+async function curveChanged(label) {
+  curveUI();
+  if ($("pressureEnabled").checked) await task(label, () => generate());
+  else markCurveDirty();
+}
+$("addCurve").onclick = async () => {
+  if (curves.length >= 5) return;
+  const before = captureUI();
+  allCurves();
+  const offset = Math.max(...bounds(boundary).span) * 0.08;
+  curves.push(points.map((p) => [p[0], p[1] + offset, p[2]]));
+  activeCurve = curves.length - 1;
+  points = curves[activeCurve];
+  recordUI(before, "Add curve");
+  await curveChanged("Applying added curve…");
+};
+$("removeCurve").onclick = async () => {
+  if (curves.length <= 1) return;
+  const before = captureUI();
+  curves.splice(activeCurve, 1);
+  activeCurve = Math.min(activeCurve, curves.length - 1);
+  points = curves[activeCurve];
+  recordUI(before, "Remove curve");
+  await curveChanged("Removing curve pressure…");
+};
+$("clippingEnabled").onchange = () => {
+  view.setClip({
+    ...view.clipState,
+    enabled: $("clippingEnabled").checked,
+    position: view.clipState?.position || bounds(boundary).center,
+    quaternion: view.clipState?.quaternion || [0, 0, 0, 1],
+  });
+  if ($("clippingEnabled").checked) activateTool("clipMove");
+};
+$("resetClip").onclick = () => {
+  view.setClip({
+    enabled: $("clippingEnabled").checked,
+    position: bounds(boundary).center,
+    quaternion: [0, 0, 0, 1],
+  });
+};
 $("resetCurveBtn").onclick = () => {
   const before = captureUI();
   resetCurve();
@@ -939,7 +1043,7 @@ $("curveEditBtn").onclick = () => {
 };
 $("pressureEnabled").onchange = () => {
   curveUI();
-  markCurveDirty();
+  task("Updating curve pressure…", () => generate());
 };
 $("curveFile").onchange = () =>
   task("Reading Rhino attractor curve…", async () => {
@@ -948,16 +1052,18 @@ $("curveFile").onchange = () =>
     const r = await rhino(),
       doc = r.File3dm.fromByteArray(new Uint8Array(await file.arrayBuffer()));
     if (!doc) throw Error("Could not read Rhino file.");
-    let found;
+    const found = [];
     try {
       const objs = doc.objects();
       for (let i = 0; i < objs.count; i++) {
         const o = objs.get(i),
           g = o.geometry();
-        if (!found && g instanceof r.Curve) {
+        if (g instanceof r.Curve) {
           const d = g.domain;
-          found = Array.from({ length: 17 }, (_, k) =>
-            g.pointAt(d[0] + ((d[1] - d[0]) * k) / 16),
+          found.push(
+            Array.from({ length: 17 }, (_, k) =>
+              g.pointAt(d[0] + ((d[1] - d[0]) * k) / 16),
+            ),
           );
         }
         g.delete();
@@ -966,13 +1072,20 @@ $("curveFile").onchange = () =>
     } finally {
       doc.delete();
     }
-    if (!found)
+    if (!found.length)
       throw Error(
-        "No Rhino curve found. Export one attractor curve in the file.",
+        "No Rhino curve found. Export 1–5 attractor curves in the file.",
       );
-    points = found;
+    if (found.length > 5)
+      throw Error(
+        "The Rhino file has more than five curves. Export up to five attractor curves.",
+      );
+    curves = validateCurves(found);
+    activeCurve = 0;
+    points = curves[0];
     curveUI();
-    markCurveDirty();
+    if ($("pressureEnabled").checked) await generate();
+    else markCurveDirty();
   });
 $("showBoundary").onchange = () => {
   if (view.boundaryGroup)
@@ -1091,24 +1204,34 @@ $("export3dm").onclick = () =>
         : "Rhino mesh exported. Use your original model units when importing.",
     );
   });
+function projectData() {
+  if (!configUsed || !display) throw Error("Generate geometry first.");
+  return {
+    format: "balloon-build",
+    version: 3,
+    savedAt: new Date().toISOString(),
+    iterationName: $("iterationName").value.trim() || "Untitled iteration",
+    curves: validateCurves(allCurves()),
+    activeCurve,
+    controlSettings: params(),
+    clipping: view.clipState,
+    fileName,
+    params: configUsed,
+    curve: curveUsed,
+    points,
+    boundary: {
+      positions: Array.from(display.boundary.positions),
+      indices: Array.from(display.boundary.indices),
+    },
+    edits: display.edits,
+    session: display,
+    popPressure: Number($("popPressure").value) / 100,
+  };
+}
 $("saveProject").onclick = () =>
   task("Saving project…", async () => {
     if (!configUsed || !display) throw Error("Generate geometry first.");
-    const obj = {
-      format: "balloon-build",
-      version: 2,
-      fileName,
-      params: configUsed,
-      curve: curveUsed,
-      points,
-      boundary: {
-        positions: Array.from(display.boundary.positions),
-        indices: Array.from(display.boundary.indices),
-      },
-      edits: display.edits,
-      session: display,
-      popPressure: Number($("popPressure").value) / 100,
-    };
+    const obj = projectData();
     download(
       JSON.stringify(obj, (_, value) =>
         ArrayBuffer.isView(value) ? Array.from(value) : value,
@@ -1120,68 +1243,164 @@ $("saveProject").onclick = () =>
       "Project saved with the last generated settings and accepted edits.",
     );
   });
+async function refreshIterations(selectedId = "") {
+  const rows = await iterationStore("list");
+  rows.sort((a, b) => b.project.savedAt.localeCompare(a.project.savedAt));
+  $("iterationSelect").replaceChildren(
+    new Option("CURRENT ITERATION", ""),
+    ...rows.map((row) => new Option(row.name, row.id)),
+  );
+  $("iterationSelect").value = selectedId;
+}
+async function selectedIteration() {
+  const id = $("iterationSelect").value;
+  if (!id) return projectData();
+  const row = await iterationStore("get", id);
+  if (!row) throw Error("Saved iteration was not found.");
+  return row.project;
+}
+$("saveIteration").onclick = () =>
+  task("Saving iteration on this browser…", async () => {
+    const project = projectData(),
+      id = crypto.randomUUID();
+    await iterationStore("put", { id, name: project.iterationName, project });
+    await refreshIterations(id);
+    $("iterationReport").hidden = false;
+    $("iterationReport").textContent = JSON.stringify(
+      iterationSummary(project),
+      null,
+      2,
+    );
+    status(
+      "Iteration saved on this browser. Download JSON for a portable backup.",
+    );
+  });
+$("loadIteration").onclick = () =>
+  task("Loading saved iteration…", async () => {
+    if (!$("iterationSelect").value)
+      throw Error("Select a saved iteration first.");
+    const project = await selectedIteration();
+    await restoreProject(project);
+    $("iterationName").value = project.iterationName || "";
+  });
+$("deleteIteration").onclick = () =>
+  task("Removing saved iteration…", async () => {
+    const id = $("iterationSelect").value;
+    if (!id) throw Error("Select a saved iteration first.");
+    await iterationStore("delete", id);
+    await refreshIterations();
+    $("iterationReport").hidden = true;
+  });
+$("iterationData").onclick = () =>
+  task("Reading numerical iteration data…", async () => {
+    $("iterationReport").textContent = JSON.stringify(
+      iterationSummary(await selectedIteration()),
+      null,
+      2,
+    );
+    $("iterationReport").hidden = false;
+  });
+$("downloadIteration").onclick = () =>
+  task("Downloading iteration…", async () => {
+    const project = await selectedIteration();
+    download(
+      JSON.stringify(project, (_, v) =>
+        ArrayBuffer.isView(v) ? Array.from(v) : v,
+      ),
+      "balloon-build-iteration.json",
+      "application/json",
+    );
+  });
+refreshIterations().catch(() =>
+  status(
+    "Browser iteration storage is unavailable. SAVE PROJECT still downloads a portable JSON backup.",
+    true,
+  ),
+);
+async function restoreProject(obj) {
+  if (obj.format !== "balloon-build" || ![1, 2, 3].includes(obj.version))
+    throw Error("Unsupported project file.");
+  for (const id of paramsIDs) $(id).value = obj.params[id];
+  $("pressureEnabled").checked = !!obj.params.pressureEnabled;
+  const p = params();
+  if (
+    !Array.isArray(obj.points) ||
+    obj.points.length < 2 ||
+    obj.points.length > 200 ||
+    obj.points.some((a) => a.length !== 3 || a.some((v) => !Number.isFinite(v)))
+  )
+    throw Error("Invalid saved curve.");
+  const raw = canonical(obj.boundary);
+  if (
+    obj.version === 1 &&
+    (!Array.isArray(obj.edits) ||
+      obj.edits.length !== p.count ||
+      obj.edits.some(
+        (e) =>
+          !Array.isArray(e) ||
+          e.length !== 4 ||
+          e.some((v) => !Number.isFinite(v)),
+      ))
+  )
+    throw Error("Invalid saved balloon edits.");
+  boundary = raw;
+  curves = validateCurves(obj.curves || [obj.points]);
+  activeCurve = Math.max(
+    0,
+    Math.min(curves.length - 1, Number(obj.activeCurve) || 0),
+  );
+  points = curves[activeCurve];
+  fileName = String(obj.fileName || "Saved project");
+  $("fileName").textContent = fileName;
+  curveUI();
+  const curve = obj.curve || allCurves().map((c) => view.samples(c)),
+    result = await request("restore", {
+      boundary,
+      params: p,
+      curve,
+      edits: obj.edits,
+      session: obj.version >= 2 ? { ...obj.session, boundary: raw } : undefined,
+    });
+  if (obj.clipping) {
+    view.setClip(obj.clipping);
+    $("clippingEnabled").checked = !!obj.clipping.enabled;
+  } else {
+    view.setClip({
+      enabled: false,
+      position: bounds(raw).center,
+      quaternion: [0, 0, 0, 1],
+    });
+    $("clippingEnabled").checked = false;
+  }
+  needsRestore = false;
+  configUsed = p;
+  curveUsed = curve;
+  syncDisplay(result, true);
+  if (obj.controlSettings) {
+    for (const id of paramsIDs)
+      if (obj.controlSettings[id] !== undefined)
+        $(id).value = obj.controlSettings[id];
+    $("pressureEnabled").checked = !!obj.controlSettings.pressureEnabled;
+  }
+  $("popPressure").value = Math.round(
+    (obj.popPressure ?? obj.session?.popStrength ?? 0.25) * 100,
+  );
+  $("popPressureValue").value = `${$("popPressure").value}%`;
+  ["count", "strength", "influence"].forEach(
+    (id) => ($(id + "N").value = $(id).value),
+  );
+  status(
+    "Project restored with saved geometry settings and collision-checked edits.",
+  );
+}
 $("projectFile").onchange = () =>
   task("Restoring project…", async () => {
     const f = $("projectFile").files[0];
     if (!f) return;
     if (f.size > 80e6) throw Error("Project is too large.");
-    const obj = JSON.parse(await f.text());
-    if (obj.format !== "balloon-build" || ![1, 2].includes(obj.version))
-      throw Error("Unsupported project file.");
-    for (const id of paramsIDs) $(id).value = obj.params[id];
-    $("pressureEnabled").checked = !!obj.params.pressureEnabled;
-    const p = params();
-    if (
-      !Array.isArray(obj.points) ||
-      obj.points.length < 2 ||
-      obj.points.length > 200 ||
-      obj.points.some(
-        (a) => a.length !== 3 || a.some((v) => !Number.isFinite(v)),
-      )
-    )
-      throw Error("Invalid saved curve.");
-    const raw = canonical(obj.boundary);
-    if (
-      obj.version === 1 &&
-      (!Array.isArray(obj.edits) ||
-        obj.edits.length !== p.count ||
-        obj.edits.some(
-          (e) =>
-            !Array.isArray(e) ||
-            e.length !== 4 ||
-            e.some((v) => !Number.isFinite(v)),
-        ))
-    )
-      throw Error("Invalid saved balloon edits.");
-    boundary = raw;
-    points = obj.points;
-    fileName = String(obj.fileName || "Saved project");
-    $("fileName").textContent = fileName;
-    curveUI();
-    const curve = obj.curve || view.samples(points),
-      result = await request("restore", {
-        boundary,
-        params: p,
-        curve,
-        edits: obj.edits,
-        session:
-          obj.version === 2 ? { ...obj.session, boundary: raw } : undefined,
-      });
-    needsRestore = false;
-    configUsed = p;
-    curveUsed = curve;
-    syncDisplay(result, true);
-    $("popPressure").value = Math.round(
-      (obj.popPressure ?? obj.session?.popStrength ?? 0.25) * 100,
-    );
-    $("popPressureValue").value = `${$("popPressure").value}%`;
-    ["count", "strength", "influence"].forEach(
-      (id) => ($(id + "N").value = $(id).value),
-    );
-    status(
-      "Project restored with saved geometry settings and collision-checked edits.",
-    );
+    await restoreProject(JSON.parse(await f.text()));
   });
+
 $("cancelBtn").onclick = () => {
   if (nativeJobId)
     fetch("http://127.0.0.1:8788/jobs/" + nativeJobId, {

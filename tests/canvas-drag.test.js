@@ -89,6 +89,90 @@ const event = (x, y) => ({
   preventDefault() {},
   stopImmediatePropagation() {},
 });
+
+test("whole curve translation preserves every relative point position without accumulating preview deltas", () => {
+  const old = globalThis.document;
+  try {
+    const v = setup("curveMove"),
+      original = v.points.map((p) => p.slice());
+    v.beginTransform();
+    v.proxy.position.x += 1;
+    v.previewTransform();
+    v.proxy.position.x += 1;
+    v.previewTransform();
+    v.finishTransform();
+    assert.deepEqual(
+      v.points,
+      original.map((p) => [p[0] + 2, p[1], p[2]]),
+    );
+    assert.equal(v.commit.whole, true);
+  } finally {
+    globalThis.document = old;
+  }
+});
+test("clicking a curve stroke in plan view selects and drags the whole curve", () => {
+  const old = globalThis.document;
+  try {
+    const v = setup("curveMove");
+    v.allCurves = [v.points];
+    v.activeCurve = 0;
+    const line = new T.Mesh(
+      new T.TubeGeometry(
+        new T.CatmullRomCurve3(v.points.map((p) => new T.Vector3(...p))),
+        30,
+        0.08,
+        8,
+        false,
+      ),
+    );
+    line.userData.curveIndex = 0;
+    line.updateMatrixWorld();
+    v.curveLines = [line];
+    v.pointerDown(event(400, 300), 1);
+    assert(v.directDrag);
+    assert.equal(v.activeTarget.whole, true);
+    v.pointerMove(event(450, 300), 1);
+    v.pointerUp(event(450, 300), 1);
+    assert.equal(v.commit.whole, true);
+    assert(Math.abs(v.points[0][0] + 0.5) < 1e-6);
+    assert(Math.abs(v.points[1][0] - 1.5) < 1e-6);
+  } finally {
+    globalThis.document = old;
+  }
+});
+
+test("clipping translation and rotation update viewing planes without modifying mesh coordinates", () => {
+  const old = globalThis.document;
+  try {
+    const v = setup("clipMove");
+    v.scene = new T.Scene();
+    v.field = new T.Group();
+    v.field.add(v.meshes[0]);
+    const before = Array.from(v.meshes[0].geometry.attributes.position.array);
+    v.setClip({ enabled: true, position: [0, 0, 0], quaternion: [0, 0, 0, 1] });
+    v.beginTransform();
+    v.proxy.position.z = 2;
+    v.previewTransform();
+    v.finishTransform();
+    assert.equal(v.meshes[0].material.clippingPlanes[0].constant, -2);
+    v.setTool("clipRotate");
+    v.beginTransform();
+    v.proxy.quaternion.setFromAxisAngle(new T.Vector3(0, 1, 0), Math.PI / 2);
+    v.previewTransform();
+    v.finishTransform();
+    assert(
+      Math.abs(v.meshes[0].material.clippingPlanes[0].normal.x - 1) < 1e-9,
+    );
+    assert.deepEqual(
+      Array.from(v.meshes[0].geometry.attributes.position.array),
+      before,
+    );
+    v.setClip({ ...v.clipState, enabled: false });
+    assert.equal(v.meshes[0].material.clippingPlanes.length, 0);
+  } finally {
+    globalThis.document = old;
+  }
+});
 test("balloon drag selects, disables orbit, previews movement, then commits on release", () => {
   const old = globalThis.document;
   try {

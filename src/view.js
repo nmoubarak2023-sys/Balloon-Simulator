@@ -54,6 +54,7 @@ export class StudioView {
       r.setPixelRatio(Math.min(devicePixelRatio, 2));
       r.setClearColor(0x000000, 0);
       r.outputColorSpace = T.SRGBColorSpace;
+      r.localClippingEnabled = true;
       el.appendChild(r.domElement);
       r.domElement.tabIndex = 0;
       r.domElement.setAttribute(
@@ -143,6 +144,9 @@ export class StudioView {
       scale: "CLICK A BALLOON · DRAG A SCALE HANDLE · RELEASE TO CHECK FIT",
       boundary: "ENTER EXACT DEGREES ABOVE · OR DRAG A SNAPPED ROTATION RING",
       curve: "DRAG A CURVE POINT · AXIS ARROWS CONTROL X / Y / Z",
+      curveMove: "CLICK A PINK CURVE · DRAG THE WHOLE CURVE OR ITS AXIS ARROWS",
+      clipMove: "DRAG THE CLIPPING PLANE OR ITS AXIS ARROWS",
+      clipRotate: "DRAG THE ROTATION RINGS TO TURN THE CLIPPING PLANE",
     };
     document.getElementById("canvasHint").textContent = hint[tool];
     document
@@ -155,9 +159,19 @@ export class StudioView {
     if (this.busy || this.directDrag || this.transform.dragging) return;
     this.transform.detach();
     this.target = null;
-    if (this.result) return;
+    if (this.result && !this.tool.startsWith("clip")) return;
     let anchor, mode;
-    if (this.tool === "boundary" && this.box) {
+    if (this.tool.startsWith("clip") && this.clipState?.enabled) {
+      anchor = this.clipState.position;
+      mode = this.tool === "clipRotate" ? "rotate" : "translate";
+      this.target = { type: "clip" };
+    } else if (this.tool === "curveMove" && this.points?.length) {
+      anchor = [0, 1, 2].map(
+        (k) => this.points.reduce((s, p) => s + p[k], 0) / this.points.length,
+      );
+      mode = "translate";
+      this.target = { type: "curve", whole: true, index: -1 };
+    } else if (this.tool === "boundary" && this.box) {
       anchor = this.box.center;
       mode = "rotate";
       this.target = { type: "boundary" };
@@ -189,22 +203,39 @@ export class StudioView {
     this.anchor = new T.Vector3(...anchor);
     this.proxy.position.copy(this.anchor);
     this.proxy.quaternion.identity();
+    if (this.target.type === "clip")
+      this.proxy.quaternion.fromArray(this.clipState.quaternion);
     this.proxy.scale.setScalar(1);
     this.proxy.updateMatrixWorld();
     this.transform.setMode(mode);
+    if (this.tool === "clipRotate") this.transform.setRotationSnap?.(null);
+    else if (this.tool === "boundary") {
+      const degrees = Number(
+        document.getElementById("rotationSnap")?.value || 0,
+      );
+      this.transform.setRotationSnap?.(
+        degrees ? (degrees * Math.PI) / 180 : null,
+      );
+    }
     this.transform.setSpace("world");
     this.transform.attach(this.proxy);
     document.getElementById("selectionInfo").textContent =
       this.target.type === "balloon"
         ? `${this.data.meta?.[this.selected]?.members.length > 1 ? "MERGED" : "BALLOON"} ${this.data.meta?.[this.selected]?.members.map((v) => String(v + 1).padStart(2, "0")).join("+") || String(this.selected + 1).padStart(2, "0")} SELECTED`
         : this.target.type === "curve"
-          ? `CURVE POINT ${this.selectedCurve + 1} SELECTED`
-          : "BOUNDARY ROTATION";
+          ? this.target.whole
+            ? `CURVE ${(this.activeCurve || 0) + 1} SELECTED`
+            : `CURVE POINT ${this.selectedCurve + 1} SELECTED`
+          : this.target.type === "clip"
+            ? "CLIPPING PLANE"
+            : "BOUNDARY ROTATION";
   }
   beginTransform() {
     if (!this.target) return;
     this.activeTarget = { ...this.target };
     this.startAnchor = this.anchor.clone();
+    this.startPoints = this.points?.map((p) => p.slice());
+    this.startClip = this.clipState ? structuredClone(this.clipState) : null;
     this.changed = false;
     this.orbit.autoRotate = false;
     document.getElementById("rotateBtn").setAttribute("aria-pressed", "false");
@@ -224,11 +255,26 @@ export class StudioView {
         ),
       );
     this.changed = this.changed || !matrix.equals(new T.Matrix4());
-    if (target.type === "curve") {
-      this.points[target.index] = this.proxy.position.toArray();
+    if (target.type === "clip") {
+      this.setClip({
+        ...this.clipState,
+        position: this.proxy.position.toArray(),
+        quaternion: this.proxy.quaternion.toArray(),
+      });
+    } else if (target.type === "curve") {
+      if (target.whole) {
+        const delta = this.proxy.position
+          .clone()
+          .sub(this.startAnchor)
+          .toArray();
+        this.points = this.startPoints.map((p) =>
+          p.map((v, k) => v + delta[k]),
+        );
+      } else this.points[target.index] = this.proxy.position.toArray();
       this.onCurve(
         this.points.map((p) => p.slice()),
         target.index,
+        this.activeCurve || 0,
       );
     } else {
       const object =
@@ -272,7 +318,13 @@ export class StudioView {
     this.activeTarget = null;
     this.startAnchor = null;
     if (changed)
-      this.onTransform({ ...target, delta, ratio, matrix: matrix.toArray() });
+      this.onTransform({
+        ...target,
+        delta,
+        ratio,
+        matrix: matrix.toArray(),
+        clipping: this.clipState,
+      });
   }
   pointerDown(e, i) {
     if (this.busy || e.button !== 0) return;
@@ -299,7 +351,14 @@ export class StudioView {
       }
     }
     let target;
-    if (this.editCurve) {
+    if (
+      this.tool === "clipMove" &&
+      this.clipMesh &&
+      this.hit(e, i, [this.clipMesh]).length
+    ) {
+      target = { type: "clip" };
+    }
+    if (this.editCurve || this.tool === "curveMove" || this.tool === "move") {
       const hit = this.hit(e, i, this.handles || [])[0];
       if (hit) {
         this.selectedCurve = hit.object.userData.index;
@@ -311,10 +370,33 @@ export class StudioView {
         this.onCurve(
           this.points.map((p) => p.slice()),
           this.selectedCurve,
+          this.activeCurve || 0,
         );
       }
+      if (!target) {
+        const lineHit = this.hit(e, i, this.curveLines || [])[0];
+        if (lineHit) {
+          const index = lineHit.object.userData.curveIndex;
+          this.activeCurve = index;
+          this.points = this.allCurves[index].map((p) => p.slice());
+          this.tool = "curveMove";
+          this.curveWhole = true;
+          this.onCurve(
+            this.points.map((p) => p.slice()),
+            -1,
+            index,
+          );
+          this.setTool("curveMove");
+          target = { type: "curve", whole: true, index: -1 };
+        }
+      }
     }
-    if (!target && this.tool !== "boundary") {
+    if (
+      !target &&
+      !["boundary", "clipMove", "clipRotate", "curveMove", "curve"].includes(
+        this.tool,
+      )
+    ) {
       const hit = this.hit(
         e,
         i,
@@ -402,6 +484,14 @@ export class StudioView {
   }
   cancelDrag(e, i) {
     if (this.directDrag?.view !== i) return;
+    if (this.activeTarget?.type === "curve" && this.startPoints)
+      this.onCurve(
+        this.startPoints.map((p) => p.slice()),
+        this.activeTarget.index,
+        this.activeCurve || 0,
+      );
+    if (this.activeTarget?.type === "clip" && this.startClip)
+      this.setClip(this.startClip);
     this.directDrag = null;
     this.activeTarget = null;
     this.orbit.enabled = !this.busy;
@@ -417,7 +507,14 @@ export class StudioView {
   }
   hit(e, i, objects) {
     this.setRay(e, i);
-    return this.ray.intersectObjects(objects, false);
+    return this.ray
+      .intersectObjects(objects, false)
+      .filter(
+        (hit) =>
+          !(hit.object.material?.clippingPlanes || []).some(
+            (plane) => plane.distanceToPoint(hit.point) < 0,
+          ),
+      );
   }
   resize(i) {
     const el = this.renderers[i].domElement.parentElement,
@@ -562,7 +659,9 @@ export class StudioView {
     });
     this.attachTool();
   }
-  curve(points, editing, visible) {
+  curve(points, editing, visible, curves = [points], active = 0) {
+    this.allCurves = curves.map((c) => c.map((p) => p.slice()));
+    this.activeCurve = active;
     this.selectedCurve = Math.max(
       0,
       Math.min(this.selectedCurve, points.length - 1),
@@ -571,33 +670,56 @@ export class StudioView {
     this.editCurve = editing;
     this.disposeGroup(this.curveGroup);
     this.handles = [];
+    this.curveLines = [];
     if (points.length < 2 || !visible) return;
-    const spline = new T.CatmullRomCurve3(
-      points.map((p) => new T.Vector3(...p)),
-      false,
-      "centripetal",
-    );
-    this.curveSamples = spline
-      .getPoints(Math.max(100, points.length * 12))
-      .map((p) => p.toArray());
-    const line = new T.Line(
-      new T.BufferGeometry().setFromPoints(
-        this.curveSamples.map((p) => new T.Vector3(...p)),
-      ),
-      new T.LineBasicMaterial({
-        color: 0x21e0ed,
-        transparent: true,
-        opacity: 0.9,
-        depthTest: false,
-      }),
-    );
-    line.renderOrder = 10;
-    this.curveGroup.add(line);
+    curves.forEach((control, curveIndex) => {
+      const spline = new T.CatmullRomCurve3(
+        control.map((p) => new T.Vector3(...p)),
+        false,
+        "centripetal",
+      );
+      this.curveSamples = spline
+        .getPoints(Math.max(100, points.length * 12))
+        .map((p) => p.toArray());
+      const line = new T.Mesh(
+        new T.TubeGeometry(
+          spline,
+          Math.max(100, control.length * 12),
+          this.span * (curveIndex === active ? 0.0024 : 0.0018),
+          8,
+          false,
+        ),
+        new T.MeshBasicMaterial({
+          color: 0xdc24f4,
+          transparent: true,
+          opacity: curveIndex === active ? 1 : 0.72,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      );
+      line.renderOrder = 10;
+      line.userData.curveIndex = curveIndex;
+      this.curveGroup.add(line);
+      // Generous invisible pick area keeps thin strokes easy to select.
+      const picker = new T.Mesh(
+        new T.TubeGeometry(
+          spline,
+          Math.max(100, control.length * 12),
+          this.span * 0.008,
+          6,
+          false,
+        ),
+        new T.MeshBasicMaterial({ visible: false }),
+      );
+      picker.userData.curveIndex = curveIndex;
+      this.curveLines.push(picker);
+      this.curveGroup.add(picker);
+    });
     if (editing)
       points.forEach((p, i) => {
         const handle = new T.Mesh(
           new T.SphereGeometry(this.span * 0.012, 16, 12),
-          new T.MeshBasicMaterial({ color: 0xd4fcff, depthTest: false }),
+          new T.MeshBasicMaterial({ color: 0xdc24f4, depthTest: false }),
         );
         handle.position.set(...p);
         handle.userData.index = i;
@@ -615,6 +737,70 @@ export class StudioView {
     )
       .getPoints(Math.max(100, points.length * 12))
       .map((p) => p.toArray());
+  }
+  setClip(state) {
+    if (
+      !Array.isArray(state.position) ||
+      state.position.length !== 3 ||
+      state.position.some((v) => !Number.isFinite(v)) ||
+      !Array.isArray(state.quaternion) ||
+      state.quaternion.length !== 4 ||
+      state.quaternion.some((v) => !Number.isFinite(v)) ||
+      Math.hypot(...state.quaternion) < 1e-12
+    )
+      throw Error("Invalid clipping plane coordinates or orientation.");
+    state = {
+      ...state,
+      quaternion: new T.Quaternion()
+        .fromArray(state.quaternion)
+        .normalize()
+        .toArray(),
+    };
+    this.clipState = {
+      enabled: !!state.enabled,
+      position: [...state.position],
+      quaternion: [...state.quaternion],
+    };
+    const normal = new T.Vector3(0, 0, 1).applyQuaternion(
+      new T.Quaternion().fromArray(state.quaternion),
+    );
+    const plane = new T.Plane().setFromNormalAndCoplanarPoint(
+      normal,
+      new T.Vector3(...state.position),
+    );
+    this.field.traverse((object) => {
+      if (!object.material) return;
+      for (const material of Array.isArray(object.material)
+        ? object.material
+        : [object.material]) {
+        material.clippingPlanes = state.enabled ? [plane] : [];
+        material.needsUpdate = true;
+      }
+    });
+    if (!this.clipMesh) {
+      this.clipMesh = new T.Mesh(
+        new T.PlaneGeometry(1, 1),
+        new T.MeshBasicMaterial({
+          color: 0x21e0ed,
+          transparent: true,
+          opacity: 0.12,
+          side: T.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      this.clipMesh.add(
+        new T.LineSegments(
+          new T.EdgesGeometry(this.clipMesh.geometry),
+          new T.LineBasicMaterial({ color: 0x21e0ed }),
+        ),
+      );
+      this.scene.add(this.clipMesh);
+    }
+    this.clipMesh.visible = state.enabled;
+    this.clipMesh.position.fromArray(state.position);
+    this.clipMesh.quaternion.fromArray(state.quaternion);
+    this.clipMesh.scale.setScalar(this.span * 1.25);
+    if (!this.activeTarget) this.attachTool();
   }
   output(raw) {
     if (raw) this.transform.detach();
@@ -646,6 +832,7 @@ export class StudioView {
         document.getElementById("showBoundary").checked;
       this.attachTool();
     }
+    if (this.clipState) this.setClip(this.clipState);
   }
   animate() {
     requestAnimationFrame(() => this.animate());

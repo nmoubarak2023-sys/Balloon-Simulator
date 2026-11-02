@@ -200,6 +200,9 @@ export function populate(raw, count, seed) {
   return out;
 }
 export function closestPolyline(p, curve) {
+  // Separate polylines must never be joined by an artificial pressure segment.
+  if (Array.isArray(curve?.[0]?.[0]))
+    return Math.min(...curve.map((c) => closestPolyline(p, c)));
   let best = Infinity;
   for (let i = 0; i < curve.length - 1; i++) {
     const a = curve[i],
@@ -309,7 +312,7 @@ export class BalloonEngine {
           s.delete();
           s = next;
         };
-        if (p.pressureEnabled && curve.length > 1 && p.strength > 0) {
+        if (p.pressureEnabled && curve.length && p.strength > 0) {
           replace(
             s.warp((v) => {
               const delta = v.map((x, k) => x - c[k]),

@@ -1081,3 +1081,13 @@ footer {
     font-size: 8px;
   }
 }
+.iteration-report {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.6;
+  padding: 10px;
+  border: 1px solid #21e0ed55;
+}
