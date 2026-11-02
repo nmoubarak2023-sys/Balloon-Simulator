@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { MeshBVH } from "three-mesh-bvh";
 import { lifecycleMethods } from "./lifecycle.js";
+import { buildCavities } from "./boolean-pipeline.js";
 
 export function random(seed) {
   let a = seed >>> 0;
@@ -568,7 +569,7 @@ export class BalloonEngine {
   snapshot() {
     return this.session();
   }
-  output(mode, tolerance) {
+  output(mode, tolerance, quality = "final", progress = () => {}) {
     if (!this.boundary)
       throw Error("Generate a field before building an output.");
     if (mode === "shell")
@@ -577,27 +578,26 @@ export class BalloonEngine {
         shells: [this.rawBoundary, ...this.balloons.map((s) => this.raw(s))],
         message: `Shell assembly: ${this.balloons.length + 1} separate shells. No material removed.`,
       };
-    let result = this.boundary.setTolerance(tolerance);
-    try {
-      for (const b of this.balloons) {
-        const next = result.subtract(b);
-        result.delete();
-        result = next;
-      }
-      this.assert(result, "Boolean");
-      const raw = this.raw(result),
-        checks = topology(raw),
-        incomplete = !checks.valid || !checks.closed || !checks.manifold;
-      return {
-        mode,
-        shells: [raw],
-        checks,
-        incomplete,
-        message: `${incomplete ? "Boolean available for export with warnings" : "Boolean complete"} · Valid: ${checks.valid ? "yes" : "no"} · Closed: ${checks.closed ? "yes" : "no"} · Manifold: ${checks.manifold ? "yes" : "no"}${incomplete ? ". Export is allowed. The mesh may need repair in Rhino; separate input shells are preserved." : ""}`,
-      };
-    } finally {
-      result.delete();
-    }
+    const diagnostics = buildCavities(this, tolerance, quality, progress);
+    const raw = diagnostics.raw,
+      checks = topology(raw),
+      incomplete =
+        !checks.valid ||
+        !checks.closed ||
+        !checks.manifold ||
+        (diagnostics.intersectionAudit?.properCrossings || 0) > 0;
+    return {
+      mode,
+      shells: [raw],
+      checks,
+      quality,
+      qualityWarning:
+        diagnostics.after.stretchedFaces > 0 ||
+        diagnostics.after.degenerateFaces > 0,
+      diagnostics: { ...diagnostics, raw: undefined },
+      incomplete,
+      message: `${incomplete ? "Boolean available for export with warnings" : "Boolean topology verified"} · Valid: ${checks.valid ? "yes" : "no"} · Closed: ${checks.closed ? "yes" : "no"} · Manifold: ${checks.manifold ? "yes" : "no"} · Degenerate: ${diagnostics.after.degenerateFaces} · Stretched: ${diagnostics.after.stretchedFaces} · Max aspect: ${Number.isFinite(diagnostics.after.maxAspect) ? diagnostics.after.maxAspect.toFixed(1) : "unbounded"} · Suspected crossings: ${diagnostics.intersectionAudit?.properCrossings ?? "not checked"}${diagnostics.after.stretchedFaces ? ". Thin-feature triangles remain; surface quality is not certified." : ""}${incomplete ? " Export is allowed with warnings; separate input shells are preserved." : ""}`,
+    };
   }
 }
 Object.assign(BalloonEngine.prototype, lifecycleMethods);

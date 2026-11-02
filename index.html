@@ -439,7 +439,15 @@
                       step="0.0001"
                     />
                   </div>
+                  <label for="outputQuality">Boolean quality</label>
+                  <select id="outputQuality">
+                    <option value="final">
+                      Final / repair and retriangulate
+                    </option>
+                    <option value="preview">Preview / repair only</option>
+                  </select>
                   <button id="outputBtn" class="primary">BUILD OUTPUT ↗</button>
+                  <button id="exportQuality">DOWNLOAD QUALITY REPORT</button>
                   <p id="outputStatus" class="note">
                     Separate input shells are always preserved.
                   </p>

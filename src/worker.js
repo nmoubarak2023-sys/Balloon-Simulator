@@ -3,6 +3,7 @@ import wasmURL from "manifold-3d/manifold.wasm?url";
 import { BalloonEngine } from "./engine.js";
 import { GeometryHistory } from "./history.js";
 let engine;
+let cachedOutput;
 const history = new GeometryHistory(20);
 const ready = Module({ locateFile: () => wasmURL }).then((m) => {
   m.setup();
@@ -59,9 +60,24 @@ self.onmessage = async ({ data }) => {
     } else if (action === "undo") {
       engine = history.undo(engine);
       result = engine.snapshot();
-    } else if (action === "output")
-      result = engine.output(data.mode, data.tolerance);
-    else throw Error("Unknown operation");
+    } else if (action === "output") {
+      const key = JSON.stringify([
+        data.mode,
+        data.tolerance,
+        data.quality || "final",
+      ]);
+      if (cachedOutput?.engine === engine && cachedOutput.key === key)
+        result = cachedOutput.result;
+      else {
+        result = engine.output(
+          data.mode,
+          data.tolerance,
+          data.quality || "final",
+          (progress, text) => postMessage({ id, progress, text }),
+        );
+        cachedOutput = { engine, key, result };
+      }
+    } else throw Error("Unknown operation");
     postMessage({
       id,
       result: { ...result, historyDepth: history.past.length },

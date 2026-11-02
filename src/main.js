@@ -9,6 +9,7 @@ import { rhinoRaw, addRhinoMesh } from "./rhino-io.js";
 import { transformMesh, draggedEdit, rotationMatrix } from "./interaction.js";
 import { addTechnicalFrames } from "./frames.js";
 import { UndoJournal, isUndoShortcut } from "./history.js";
+import { meshQuality } from "./mesh-quality.js";
 const $ = (id) => document.getElementById(id),
   paramsIDs = [
     "count",
@@ -767,7 +768,8 @@ function currentOutput() {
   if (!output) throw Error("Build the output before exporting.");
   if (
     $("outputMode").value !== output.mode ||
-    Number($("tolerance").value) !== output.tolerance
+    Number($("tolerance").value) !== output.tolerance ||
+    (output.mode === "boolean" && $("outputQuality").value !== output.quality)
   )
     throw Error("Output settings changed. Build the output again.");
   return output;
@@ -780,7 +782,7 @@ function mergedRaw(shells) {
     for (const v of s.positions) p.push(v);
     for (const i of s.indices) idx.push(i + off);
   }
-  return { positions: new Float32Array(p), indices: new Uint32Array(idx) };
+  return { positions: new Float64Array(p), indices: new Uint32Array(idx) };
 }
 ["count", "strength", "influence"].forEach((id) => {
   for (const suffix of ["", "N"])
@@ -981,6 +983,7 @@ $("wireBtn").onclick = () => {
   view.meshes.forEach((m) =>
     m.children.forEach((c) => (c.visible = view.wire)),
   );
+  if (view.result) view.result.material.wireframe = view.wire;
 };
 $("outputBtn").onclick = () =>
   task("Building and verifying mesh output…", async () => {
@@ -988,18 +991,43 @@ $("outputBtn").onclick = () =>
       r = await request("output", {
         mode: $("outputMode").value,
         tolerance: p.tolerance,
+        quality: $("outputQuality").value,
       });
     output = { ...r, tolerance: p.tolerance };
     $("outputStatus").textContent = r.message;
-    $("outputStatus").classList.toggle("mesh-warning", !!r.incomplete);
+    $("outputStatus").classList.toggle(
+      "mesh-warning",
+      !!r.incomplete || !!r.qualityWarning,
+    );
     view.output(r.mode === "boolean" ? r.shells[0] : null);
-    status(r.message, !!r.incomplete);
+    status(r.message, !!r.incomplete || !!r.qualityWarning);
   });
 $("outputMode").onchange = () => {
   invalidate();
   status("Output mode changed. Build output to preview and export.");
 };
 $("tolerance").oninput = invalidate;
+$("outputQuality").onchange = invalidate;
+$("exportQuality").onclick = () =>
+  task("Preparing mesh quality report…", async () => {
+    const o = currentOutput();
+    if (!o.diagnostics)
+      throw Error("Build a Boolean output to download its quality report.");
+    download(
+      JSON.stringify(
+        {
+          tolerance: o.tolerance,
+          quality: o.quality,
+          checks: o.checks,
+          ...o.diagnostics,
+        },
+        null,
+        2,
+      ),
+      "balloon-build-mesh-quality.json",
+      "application/json",
+    );
+  });
 $("exportObj").onclick = () =>
   task("Preparing OBJ export…", async () => {
     const o = currentOutput();
@@ -1022,10 +1050,19 @@ $("exportStl").onclick = () =>
       g = geometry(mergedRaw(o.shells)),
       m = new T.Mesh(g),
       stl = new STLExporter().parse(m, { binary: true });
+    const precisionCheck = meshQuality({
+      positions: g.attributes.position.array,
+      indices: g.index.array,
+    });
     download(stl, `balloon-build-${o.mode}.stl`, "application/octet-stream");
     g.dispose();
     status(
-      "STL exported. Shell assembly preserves nested shells; it is not a unified solid.",
+      precisionCheck.degenerateFaces
+        ? `STL exported with ${precisionCheck.degenerateFaces} degenerate faces at single precision. Use Rhino or OBJ to retain double-precision detail.`
+        : o.mode === "shell"
+          ? "STL exported. Shell assembly preserves nested shells; it is not a unified solid."
+          : "STL exported from the displayed Boolean mesh. STL stores single-precision coordinates; review the output warnings.",
+      !!precisionCheck.degenerateFaces || !!o.incomplete,
     );
   });
 $("export3dm").onclick = () =>
@@ -1042,7 +1079,7 @@ $("export3dm").onclick = () =>
     doc.delete();
     status(
       o.incomplete
-        ? "Rhino mesh exported with geometry warnings. See the output checks; the mesh has not been repaired."
+        ? "Rhino mesh exported with remaining geometric warnings. Review the quality report before fabrication."
         : "Rhino mesh exported. Use your original model units when importing.",
     );
   });

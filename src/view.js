@@ -3,11 +3,14 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { bounds } from "./engine.js";
 import { uniformFactor } from "./interaction.js";
-export function geometry(raw) {
+export function geometry(raw, origin = [0, 0, 0]) {
   const g = new T.BufferGeometry();
   g.setAttribute(
     "position",
-    new T.BufferAttribute(new Float32Array(raw.positions), 3),
+    new T.BufferAttribute(
+      Float32Array.from(raw.positions, (v, i) => v - origin[i % 3]),
+      3,
+    ),
   );
   g.setIndex(new T.BufferAttribute(new Uint32Array(raw.indices), 1));
   g.computeVertexNormals();
@@ -624,15 +627,18 @@ export class StudioView {
     if (raw) {
       this.meshes.forEach((m) => (m.visible = false));
       this.boundaryGroup.visible = false;
+      const origin = bounds(raw).center;
       this.result = new T.Mesh(
-        geometry(raw),
+        geometry(raw, origin),
         new T.MeshPhysicalMaterial({
           color: 0x4e9fa9,
+          wireframe: this.wire,
           metalness: 0.25,
           roughness: 0.28,
           side: T.DoubleSide,
         }),
       );
+      this.result.position.fromArray(origin);
       this.field.add(this.result);
     } else {
       this.meshes.forEach((m) => (m.visible = true));
