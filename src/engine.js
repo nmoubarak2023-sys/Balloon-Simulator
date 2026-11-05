@@ -586,7 +586,7 @@ export class BalloonEngine {
       return {
         mode,
         shells: [this.rawBoundary, ...this.balloons.map((s) => this.raw(s))],
-        message: `Shell assembly: ${this.balloons.length + 1} separate shells. No material removed.`,
+        message: `Shell assembly: ${this.balloons.length + 1} separate shells. Ready to export: choose EXPORT .3DM, .OBJ or .STL below. No material removed.`,
       };
     const diagnostics =
       quality === "rebuild"

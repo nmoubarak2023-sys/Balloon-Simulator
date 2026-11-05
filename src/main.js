@@ -322,7 +322,7 @@ function restoreUI(context, result) {
   if (output) {
     $("outputStatus").textContent = output.message;
     $("outputStatus").classList.toggle("mesh-warning", !!output.incomplete);
-    view.output(output.mode === "boolean" ? output.shells[0] : null);
+    view.output(output.mode === "shell" ? output.shells : output.shells[0]);
   }
   view.transform.setRotationSnap(
     Number($("rotationSnap").value)
@@ -1140,7 +1140,9 @@ $("wireBtn").onclick = () => {
   view.meshes.forEach((m) =>
     m.children.forEach((c) => (c.visible = view.wire)),
   );
-  if (view.result) view.result.material.wireframe = view.wire;
+  if (view.result) view.result.traverse((object) => {
+    if (object.material) object.material.wireframe = view.wire;
+  });
 };
 $("outputBtn").onclick = () =>
   task("Building and verifying mesh output…", async () => {
@@ -1157,7 +1159,7 @@ $("outputBtn").onclick = () =>
       "mesh-warning",
       !!r.incomplete || !!r.qualityWarning,
     );
-    view.output(r.mode === "boolean" ? r.shells[0] : null);
+    view.output(r.mode === "shell" ? r.shells : r.shells[0]);
     status(r.message, !!r.incomplete || !!r.qualityWarning);
   });
 $("outputMode").onchange = () => {

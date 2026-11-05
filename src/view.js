@@ -812,25 +812,36 @@ export class StudioView {
     if (raw) this.transform.detach();
     if (this.result) {
       this.field.remove(this.result);
-      this.result.geometry.dispose();
-      this.result.material.dispose();
+      this.result.traverse((object) => {
+        object.geometry?.dispose();
+        object.material?.dispose();
+      });
     }
     this.result = null;
     if (raw) {
       this.meshes.forEach((m) => (m.visible = false));
       this.boundaryGroup.visible = false;
-      const origin = bounds(raw).center;
-      this.result = new T.Mesh(
-        geometry(raw, origin),
-        new T.MeshPhysicalMaterial({
-          color: 0x4e9fa9,
-          wireframe: this.wire,
-          metalness: 0.25,
-          roughness: 0.28,
-          side: T.DoubleSide,
-        }),
-      );
-      this.result.position.fromArray(origin);
+      const assembly = Array.isArray(raw);
+      this.result = new T.Group();
+      for (const [index, shell] of (assembly ? raw : [raw]).entries()) {
+        const container = assembly && index === 0;
+        const origin = bounds(shell).center;
+        const mesh = new T.Mesh(
+          geometry(shell, origin),
+          new T.MeshPhysicalMaterial({
+            color: container ? 0x21e0ed : 0x4e9fa9,
+            wireframe: this.wire,
+            metalness: container ? 0 : 0.25,
+            roughness: 0.28,
+            side: T.DoubleSide,
+            transparent: container,
+            opacity: container ? 0.12 : 1,
+            depthWrite: !container,
+          }),
+        );
+        mesh.position.fromArray(origin);
+        this.result.add(mesh);
+      }
       this.field.add(this.result);
     } else {
       this.meshes.forEach((m) => (m.visible = true));
