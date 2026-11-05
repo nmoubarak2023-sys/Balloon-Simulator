@@ -17,7 +17,7 @@ worker = worker.replaceAll(
 const workerExpr = `new URL(new URL(\`${workerName}\`,import.meta.url).href,\`\`+import.meta.url)`;
 if (!main.includes(workerExpr))
   throw Error("Worker build structure changed; review standalone packaging.");
-main = main.replace(workerExpr, "embeddedWorkerURL");
+main = main.replaceAll(workerExpr, "embeddedWorkerURL");
 const jsExpr = "new URL(`vendor/rhino3dm.js`,document.baseURI).href";
 const wasmExpr = "new URL(`vendor/rhino3dm.wasm`,document.baseURI).href";
 if (!main.includes(jsExpr) || !main.includes(wasmExpr))

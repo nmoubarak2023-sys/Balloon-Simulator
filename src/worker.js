@@ -3,6 +3,7 @@ import wasmURL from "manifold-3d/manifold.wasm?url";
 import { BalloonEngine } from "./engine.js";
 import { GeometryHistory } from "./history.js";
 import { precisionOutput } from "./precision-client.js";
+import { voronoiBuild } from "./voronoi-engine.js";
 let engine;
 let cachedOutput;
 const history = new GeometryHistory(20);
@@ -15,7 +16,9 @@ self.onmessage = async ({ data }) => {
   try {
     await ready;
     let result;
-    if (action === "generate" || action === "restore") {
+    if (action === "voronoi") {
+      result = voronoiBuild(engine.m, data.params);
+    } else if (action === "generate" || action === "restore") {
       const next = new BalloonEngine(engine.m);
       try {
         result =

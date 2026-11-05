@@ -1,4 +1,5 @@
 import "./style.css";
+import { initVoronoi } from "./voronoi-ui.js";
 import * as T from "three";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
 import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
@@ -221,7 +222,9 @@ function captureUI() {
     output,
     controls: Object.fromEntries(
       [
-        ...document.querySelectorAll("input[id]:not([type=file]),select[id]"),
+        ...document.querySelectorAll(
+          "main:not(#voronoiWorkspace) input[id]:not([type=file]),main:not(#voronoiWorkspace) select[id]",
+        ),
       ].map((el) => [
         el.id,
         {
@@ -358,6 +361,7 @@ async function undoLast() {
 }
 $("undoBtn").onclick = undoLast;
 document.addEventListener("keydown", (event) => {
+  if (document.querySelector("main").hidden) return;
   if (isUndoShortcut(event)) {
     event.preventDefault();
     $("undoBtn").click();
@@ -367,6 +371,7 @@ document.addEventListener(
   "change",
   (event) => {
     const el = event.target;
+    if (el.closest("#voronoiWorkspace")) return;
     if (
       !el.id ||
       el.type === "file" ||
@@ -1451,5 +1456,9 @@ $("cancelBtn").onclick = () => {
 $("helpBtn").onclick = () => $("help").showModal();
 $("closeHelp").onclick = () => $("help").close();
 newWorker();
+initVoronoi(
+  () => new Worker(new URL("./worker.js", import.meta.url), { type: "module" }),
+  rhino,
+);
 demo();
 task("Generating demonstration balloon field…", () => generate(true));
