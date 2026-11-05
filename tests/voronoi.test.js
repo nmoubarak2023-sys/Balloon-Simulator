@@ -18,6 +18,45 @@ const defaults = {
   spacing: 3,
   smoothing: 4,
 };
+test("individual transforms use stable seed IDs and rebuild the footprint and roof", () => {
+  const a = voronoiBuild(m, defaults),
+    b = voronoiBuild(m, { ...defaults, edits: { 0: [4, 2, 1, 1.2] } });
+  assert.deepEqual(a.ids, b.ids);
+  assert.deepEqual(a.cells, b.cells);
+  assert.deepEqual(b.spheres[0].center, [
+    a.spheres[0].center[0] + 4,
+    a.spheres[0].center[1] + 2,
+    1,
+  ]);
+  assert.equal(b.spheres[0].radius, a.spheres[0].radius * 1.2);
+  assert.notEqual(a.volume, b.volume);
+  assert(b.closed);
+  assert.throws(() =>
+    voronoiBuild(m, { ...defaults, edits: { 0: [0, 0, 0, 0] } }),
+  );
+});
+test("curve pressure changes original balloon surfaces and enclosed roof; disabling it restores the baseline", () => {
+  const a = voronoiBuild(m, defaults),
+    settings = {
+      ...defaults,
+      curves: [
+        [
+          [0, 25, 0],
+          [80, 25, 0],
+        ],
+      ],
+      strength: 5,
+      influence: 25,
+    };
+  const b = voronoiBuild(m, { ...settings, pressureEnabled: true }),
+    c = voronoiBuild(m, { ...settings, pressureEnabled: false });
+  assert(b.volume < a.volume);
+  assert.deepEqual(a.ids, b.ids);
+  assert.deepEqual(a.cells, b.cells);
+  assert(b.spheres.every((s) => s.raw));
+  assert(b.closed);
+  assert.deepEqual(c.raw, a.raw);
+});
 test("uniform roof triangulation avoids the old fan slivers while retaining a closed solid", () => {
   const r = voronoiBuild(m, { ...defaults, spacing: 2 });
   assert(r.quality.maxAspect < 100);

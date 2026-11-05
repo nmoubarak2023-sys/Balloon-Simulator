@@ -1115,7 +1115,7 @@ footer {
   gap: 24px;
 }
 .voro-layout .panel {
-  border: 1px solid #21e0ed88;
+  border: 0;
   margin-bottom: 20px;
   background: #000;
 }

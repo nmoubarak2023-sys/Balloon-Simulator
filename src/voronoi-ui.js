@@ -1,3 +1,5 @@
+import { addTechnicalFrames } from "./frames.js";
+import { createVoronoiEditing } from "./voronoi-editing.js";
 import * as T from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
@@ -27,7 +29,7 @@ export function initVoronoi(workerFactory, rhino) {
     ["spacing", "Mesh spacing (ft)", 2, 0.5, 10, 0.5],
     ["smoothing", "Valley smoothing passes", 4, 0, 20, 1],
   ];
-  pane.innerHTML = `<div class="voro-layout"><section class="panel"><div class="panel-heading"><span>PERSPECTIVE <small>01 / VORONOI BALLOONS</small></span><button id="vFit">FIT ↗</button></div><div class="canvas-tools"><button id="vRoof" aria-pressed="true">ENCLOSURE</button><button id="vSpheres" aria-pressed="false">BALLOONS</button><button id="vWire" aria-pressed="false">WIRE</button></div><div id="vPerspective" class="voro-canvas"></div><div class="viewer-footer">ROOF / FLAT FLOOR / PERIMETER ONLY</div></section><aside><section class="panel"><div class="panel-heading">PLAN VIEW <small>02 / CELLS & SELECTED SEEDS</small></div><div id="vPlan" class="voro-plan"></div></section><section class="panel"><div class="panel-heading">CONTROL PANEL <small>03 / INDEPENDENT SIMULATION</small></div><div class="voro-controls"><label>Boundary rectangle (ft)<select id="vSize"><option value="160">160 × 100</option><option value="80" selected>80 × 50</option><option value="40">40 × 25</option></select></label>${fields.map(([id, label, value, min, max, step]) => `<div class="control"><label for="v_${id}">${label}</label><input id="vn_${id}" type="number" value="${value}" min="${min}" max="${max}" step="${step}" aria-label="${label}"><input id="v_${id}" type="range" value="${value}" min="${min}" max="${max}" step="${step}"></div>`).join("")}<button id="vGenerate" class="primary">GENERATE ENCLOSURE ↗</button><p class="note">Nearest-point selection retains original Voronoi cells. The roof uses the highest original sphere surface; smoothing changes interior heights only. Disconnected footprints remain separate and are reported.</p><div class="pair"><button id="vObj">EXPORT .OBJ</button><button id="v3dm">EXPORT .3DM</button></div><button id="vSave">SAVE SETTINGS & DATA</button><label class="button" for="vLoad">OPEN VORONOI PROJECT</label><input hidden id="vLoad" type="file" accept=".json"><pre id="vReport" class="iteration-report">Generate an enclosure to check its mesh.</pre></div></section></aside></div><div class="status-bar" id="vStatus" role="status">Ready to generate.</div>`;
+  pane.innerHTML = `<div class="voro-layout"><section class="panel"><div class="panel-heading"><span>PERSPECTIVE <small>01 / VORONOI BALLOONS</small></span><button id="vFit">FIT ↗</button></div><div class="canvas-tools"><button id="vRoof" aria-pressed="true">ENCLOSURE</button><button id="vSpheres" aria-pressed="false">BALLOONS</button><button id="vWire" aria-pressed="false">WIRE</button></div><div id="vPerspective" class="voro-canvas"></div><div class="viewer-footer">ROOF / FLAT FLOOR / PERIMETER ONLY</div></section><aside><section class="panel"><div class="panel-heading">PLAN VIEW <small>02 / CELLS & SELECTED SEEDS</small></div><div id="vPlan" class="voro-plan"></div></section><section class="panel"><div class="panel-heading">CONTROL PANEL <small>03 / INDEPENDENT SIMULATION</small></div><div class="voro-controls"><label>Boundary rectangle (ft)<select id="vSize"><option value="160">160 × 100</option><option value="80" selected>80 × 50</option><option value="40">40 × 25</option></select></label>${fields.map(([id, label, value, min, max, step]) => `<div class="control"><label for="v_${id}">${label}</label><input id="vn_${id}" type="number" value="${value}" min="${min}" max="${max}" step="${step}" aria-label="${label}"><input id="v_${id}" type="range" value="${value}" min="${min}" max="${max}" step="${step}"></div>`).join("")}<button id="vGenerate" class="primary">GENERATE ENCLOSURE ↗</button><p class="note">Nearest-point selection retains original Voronoi cells. The roof uses the highest edited balloon surface; smoothing changes interior heights only. Disconnected footprints remain separate and are reported.</p><div class="pair"><button id="vObj">EXPORT .OBJ</button><button id="v3dm">EXPORT .3DM</button></div><button id="vSave">SAVE SETTINGS & DATA</button><label class="button" for="vLoad">OPEN VORONOI PROJECT</label><input hidden id="vLoad" type="file" accept=".json"><pre id="vReport" class="iteration-report">Generate an enclosure to check its mesh.</pre></div></section></aside></div><div class="status-bar" id="vStatus" role="status">Ready to generate.</div>`;
   const stages = [
     "Boundary",
     "Seed points",
@@ -45,7 +47,7 @@ export function initVoronoi(workerFactory, rhino) {
     stages
       .map(
         (name, i) =>
-          '<option value="' + i + '">' + (i + 1) + " / " + name + "</option>",
+          '<option value="' + i + '">' + (i + 1) + ". " + name + "</option>",
       )
       .join("") +
     '</select><button id="vNext">NEXT →</button><button id="vPlay">PLAY STEPS</button><p id="vStepDescription" class="note"></p>';
@@ -53,6 +55,7 @@ export function initVoronoi(workerFactory, rhino) {
   let stage = 0,
     timer;
   const $ = (id) => pane.querySelector("#" + id);
+  let editing;
   let worker,
     result,
     pending = false,
@@ -129,6 +132,7 @@ export function initVoronoi(workerFactory, rhino) {
     if (!result) return;
     $("vRoof").setAttribute("aria-pressed", stage === 7);
     $("vSpheres").setAttribute("aria-pressed", stage === 4 || stage === 5);
+    const balloonMeshes = [];
     if (stage === 7 || stage === 6) {
       const mat = new T.MeshPhysicalMaterial({
         color: 0x4e9fa9,
@@ -171,7 +175,7 @@ export function initVoronoi(workerFactory, rhino) {
       renderers[0].localClippingEnabled = true;
       for (const s of result.spheres) {
         const mesh = new T.Mesh(
-          new T.SphereGeometry(s.radius, 64, 40),
+          s.raw ? geometry(s.raw) : new T.SphereGeometry(s.radius, 64, 40),
           new T.MeshPhysicalMaterial({
             color: 0x4e9fa9,
             roughness: 0.3,
@@ -183,7 +187,9 @@ export function initVoronoi(workerFactory, rhino) {
             clippingPlanes: stage === 4 ? planes.slice(0, 4) : planes,
           }),
         );
-        mesh.position.set(...s.center, 0);
+        if (!s.raw) mesh.position.set(...s.center);
+        mesh.userData.balloonId = s.id;
+        balloonMeshes.push(mesh);
         group.add(mesh);
       }
     }
@@ -195,7 +201,7 @@ export function initVoronoi(workerFactory, rhino) {
       "One sphere per selected seed, clipped to the rectangle.",
       "Sphere preview split at the horizontal floor plane.",
       "Union of original sphere sections, filled as one floor footprint.",
-      "Highest original sphere roof, relaxed interior heights, flat bottom and perimeter closure.",
+      "Upper envelope of edited balloons, relaxed interior heights, flat bottom and perimeter closure.",
     ];
     $("vStage").value = stage;
     $("vStepDescription").textContent = descriptions[stage];
@@ -272,6 +278,7 @@ export function initVoronoi(workerFactory, rhino) {
       fit();
       fitNext = false;
     }
+    editing?.update(balloonMeshes, pending);
   }
   function parameters() {
     const width = Number($("vSize").value);
@@ -281,11 +288,13 @@ export function initVoronoi(workerFactory, rhino) {
       ...Object.fromEntries(
         fields.map(([id]) => [id, Number($("vn_" + id).value)]),
       ),
+      ...(editing?.settings() || {}),
     };
   }
   function generate() {
     if (pending) return;
     pending = true;
+    editing?.setBusy(true);
     $("vStatus").textContent = "Building footprint, roof and flat floor…";
     $("vGenerate").disabled = true;
     worker ??= workerFactory();
@@ -293,6 +302,7 @@ export function initVoronoi(workerFactory, rhino) {
       pending = false;
       $("vGenerate").disabled = false;
       if (data.error) {
+        editing?.setBusy(false);
         $("vStatus").textContent = data.error;
         return;
       }
@@ -321,6 +331,7 @@ export function initVoronoi(workerFactory, rhino) {
         generate();
     };
     worker.onerror = (e) => {
+      editing?.setBusy(false);
       pending = false;
       $("vGenerate").disabled = false;
       $("vStatus").textContent = e.message;
@@ -419,7 +430,16 @@ export function initVoronoi(workerFactory, rhino) {
   };
   function accepted() {
     if (!result) throw Error("Generate an enclosure first.");
-    if (JSON.stringify(parameters()) !== JSON.stringify(result.params))
+    const signature = (p) => {
+      const q = { ...p };
+      if (!q.pressureEnabled) {
+        delete q.curves;
+        delete q.strength;
+        delete q.influence;
+      }
+      return JSON.stringify(q);
+    };
+    if (signature(parameters()) !== signature(result.params))
       throw Error("Controls changed. Generate again before exporting.");
     return result;
   }
@@ -453,7 +473,12 @@ export function initVoronoi(workerFactory, rhino) {
   $("vSave").onclick = guarded(() =>
     download(
       JSON.stringify(
-        { format: "voronoi-balloons", version: 1, ...accepted() },
+        {
+          format: "voronoi-balloons",
+          version: 2,
+          ...accepted(),
+          editing: editing?.save(),
+        },
         (_, v) => (ArrayBuffer.isView(v) ? Array.from(v) : v),
       ),
       "voronoi-balloons.json",
@@ -465,6 +490,7 @@ export function initVoronoi(workerFactory, rhino) {
     const data = JSON.parse(await file.text());
     if (data.format !== "voronoi-balloons")
       throw Error("Open a Voronoi Balloons project.");
+    editing?.load(data.editing);
     $("vSize").value = data.params.width;
     for (const [id] of fields) {
       $("vn_" + id).value = data.params[id];
@@ -488,12 +514,43 @@ export function initVoronoi(workerFactory, rhino) {
         }
       }),
   );
+  pane
+    .querySelectorAll(".panel")
+    .forEach((panel, i) => (panel.dataset.frameCount = i + 1));
+  addTechnicalFrames(pane);
+  editing = createVoronoiEditing({
+    pane,
+    existing,
+    scene,
+    camera,
+    plan,
+    renderers,
+    orbit,
+    getResult: () => result,
+    rebuild: generate,
+    showBalloons: () => {
+      stage = 5;
+      draw();
+    },
+    rhino,
+  });
   function frame() {
     requestAnimationFrame(frame);
     if (pane.hidden) return;
     orbit.update();
     renderers[0].render(scene, camera);
+    editing?.renderPerspective(renderers[0]);
+    editing?.beforePlan();
+    if (stage >= 4) {
+      renderers[1].localClippingEnabled = true;
+      renderers[1].render(scene, plan);
+      renderers[1].autoClear = false;
+      renderers[1].clearDepth();
+    }
     renderers[1].render(diagram, plan);
+    renderers[1].autoClear = true;
+    editing?.renderPlan(renderers[1], plan);
+    editing?.afterPlan();
   }
   frame();
 }

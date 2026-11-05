@@ -1,12 +1,15 @@
 // Pixel-sized SVG borders retain the reference's thin strokes at every panel size.
-export function addTechnicalFrames() {
+export function addTechnicalFrames(root = document) {
   const ns = "http://www.w3.org/2000/svg";
-  document.querySelectorAll(".panel").forEach((panel) => {
-    const filledCount = panel.classList.contains("viewer-panel")
-      ? 1
-      : panel.classList.contains("plan-panel")
-        ? 2
-        : 3;
+  root.querySelectorAll(".panel").forEach((panel) => {
+    if (panel.querySelector(":scope > .technical-frame")) return;
+    const filledCount =
+      Number(panel.dataset.frameCount) ||
+      (panel.classList.contains("viewer-panel")
+        ? 1
+        : panel.classList.contains("plan-panel")
+          ? 2
+          : 3);
     const svg = document.createElementNS(ns, "svg");
     svg.classList.add("technical-frame");
     svg.setAttribute("aria-hidden", "true");
