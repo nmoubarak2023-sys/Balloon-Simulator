@@ -1219,3 +1219,54 @@ footer {
     display: none;
   }
 }
+
+.geometry-library {
+  border: 1px solid #21e0ed44;
+  margin-bottom: 14px;
+  min-width: 0;
+}
+.geometry-library .section-body {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+.geometry-library input[type="text"] {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  background: #000;
+  color: #21e0ed;
+  border: 1px solid #21e0ed44;
+  padding: 9px;
+  font: inherit;
+}
+.geometry-list {
+  display: grid;
+  gap: 12px;
+}
+.geometry-card {
+  padding: 10px;
+  border: 1px solid #21e0ed44;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.geometry-card img {
+  width: 100%;
+  max-height: 150px;
+  object-fit: contain;
+  background: #000;
+}
+.geometry-card strong {
+  color: #21e0ed;
+  overflow-wrap: anywhere;
+}
+.geometry-card small {
+  color: #8ca9ad;
+}
+.geometry-card .pair {
+  margin: 0;
+}
+.geometry-message {
+  overflow-wrap: anywhere;
+}

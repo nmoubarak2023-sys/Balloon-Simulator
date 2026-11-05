@@ -1,3 +1,4 @@
+import { validBalloonEdit } from "./balloon-edit.js";
 import cdt2d from "cdt2d";
 import { random, closestPolyline } from "./engine.js";
 import * as T from "three";
@@ -44,17 +45,7 @@ export function voronoiBuild(m, p) {
     throw Error(
       "Check count, selected index, radii, floor height and spacing. The floor must intersect at least one sphere.",
     );
-  if (
-    p.edits &&
-    Object.values(p.edits).some(
-      (e) =>
-        !Array.isArray(e) ||
-        e.length !== 4 ||
-        !e.every(Number.isFinite) ||
-        e[3] < 0.1 ||
-        e[3] > 3,
-    )
-  )
+  if (p.edits && Object.values(p.edits).some((e) => !validBalloonEdit(e)))
     throw Error(
       "Balloon edits need finite X, Y, Z and scale between 0.1 and 3.",
     );
@@ -125,6 +116,7 @@ export function voronoiBuild(m, p) {
   const rr = random(radiusSeed),
     spheres = ids.map((id) => ({
       id,
+      axisScale: [0, 1, 2].map((k) => p.edits?.[id]?.[4 + k] ?? 1),
       center: points[id]
         .map((v, k) => v + (p.edits?.[id]?.[k] || 0))
         .concat(p.edits?.[id]?.[2] || 0),
@@ -145,37 +137,56 @@ export function voronoiBuild(m, p) {
   try {
     const rectangle = own(m.CrossSection.square([w, h]));
     const pressure = !!p.pressureEnabled && p.strength > 0 && p.curves?.length;
-    const surfaces = pressure
-      ? spheres.map((s) => {
-          let solid = own(m.Manifold.sphere(s.radius, 80).translate(s.center));
-          solid = own(
-            solid.warp((v) => {
-              const d = closestPolyline(v, p.curves),
-                u = Math.max(0, 1 - d / Math.max(0.01, p.influence)),
-                weight = u * u * u * (10 + u * (-15 + 6 * u)),
-                depth = Math.min(p.strength, s.radius * 0.75) * weight;
-              for (let k = 0; k < 3; k++)
-                v[k] =
-                  s.center[k] + (v[k] - s.center[k]) * (1 - depth / s.radius);
-            }),
-          );
-          const mesh = solid.getMesh(),
-            g = new T.BufferGeometry();
-          g.setAttribute(
-            "position",
-            new T.BufferAttribute(new Float32Array(mesh.vertProperties), 3),
-          );
-          g.setIndex(new T.BufferAttribute(new Uint32Array(mesh.triVerts), 1));
-          const bvh = new MeshBVH(g);
-          disposables.push(g);
-          const raw = {
-            positions: new Float32Array(mesh.vertProperties),
-            indices: new Uint32Array(mesh.triVerts),
-          };
-          s.raw = raw;
-          return { solid, bvh, top: s.center[2] + s.radius + 1 };
-        })
-      : null;
+    const surfaces =
+      pressure || spheres.some((s) => s.axisScale.some((v) => v !== 1))
+        ? spheres.map((s) => {
+            let solid = own(
+              m.Manifold.sphere(s.radius, 80).translate(s.center),
+            );
+            if (pressure)
+              solid = own(
+                solid.warp((v) => {
+                  const d = closestPolyline(v, p.curves),
+                    u = Math.max(0, 1 - d / Math.max(0.01, p.influence)),
+                    weight = u * u * u * (10 + u * (-15 + 6 * u)),
+                    depth = Math.min(p.strength, s.radius * 0.75) * weight;
+                  for (let k = 0; k < 3; k++)
+                    v[k] =
+                      s.center[k] +
+                      (v[k] - s.center[k]) * (1 - depth / s.radius);
+                }),
+              );
+            if (s.axisScale.some((v) => v !== 1))
+              solid = own(
+                own(
+                  own(solid.translate(s.center.map((v) => -v))).scale(
+                    s.axisScale,
+                  ),
+                ).translate(s.center),
+              );
+            const mesh = solid.getMesh(),
+              g = new T.BufferGeometry();
+            g.setAttribute(
+              "position",
+              new T.BufferAttribute(new Float32Array(mesh.vertProperties), 3),
+            );
+            g.setIndex(
+              new T.BufferAttribute(new Uint32Array(mesh.triVerts), 1),
+            );
+            const bvh = new MeshBVH(g);
+            disposables.push(g);
+            const raw = {
+              positions: new Float32Array(mesh.vertProperties),
+              indices: new Uint32Array(mesh.triVerts),
+            };
+            s.raw = raw;
+            return {
+              solid,
+              bvh,
+              top: s.center[2] + s.radius * s.axisScale[2] + 1,
+            };
+          })
+        : null;
     const circles = spheres
       .filter((s) => s.radius > Math.abs(floor - s.center[2]))
       .map((s) =>

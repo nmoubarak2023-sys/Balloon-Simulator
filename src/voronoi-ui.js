@@ -1,4 +1,5 @@
-import { quadObj } from "./quad-mesh.js";
+import { mountGeometryLibrary, canvasThumbnail } from "./geometry-library.js";
+import { quadObj, quadMesh } from "./quad-mesh.js";
 import { addTechnicalFrames } from "./frames.js";
 import { createVoronoiEditing } from "./voronoi-editing.js";
 import * as T from "three";
@@ -194,7 +195,10 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
             clippingPlanes: stage === 4 ? planes.slice(0, 4) : planes,
           }),
         );
-        if (!s.raw) mesh.position.set(...s.center);
+        if (!s.raw) {
+          mesh.position.set(...s.center);
+          mesh.scale.fromArray(s.axisScale || [1, 1, 1]);
+        }
         const lines = quadWire(s.raw || rawGeometry(mesh.geometry));
         lines.material.clippingPlanes =
           stage === 4 ? planes.slice(0, 4) : planes;
@@ -332,7 +336,7 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
           nakedEdges: q.boundaryEdges,
           nonManifoldEdges: q.nonManifoldEdges,
           degenerateFaces: q.degenerateFaces,
-          quadFaces: q.triangles * 3,
+          quadFaces: quadMesh(result.raw).quads.length / 4,
           volumeCubicFeet: result.volume,
           selectedOriginalIndices: result.ids,
         },
@@ -605,6 +609,51 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
     }
     fitNext = true;
     generate();
+  });
+  mountGeometryLibrary({
+    workspace: "voronoi",
+    container: pane.querySelector(".voro-controls"),
+    save: () => {
+      if (pending) throw Error("Wait for generation to finish before saving.");
+      return {
+        format: "saved-voronoi-geometry",
+        result: accepted(),
+        editing: editing.save(),
+        stage,
+        wire,
+        report: $("vReport").textContent,
+      };
+    },
+    load: (data) => {
+      if (pending) throw Error("Wait for generation to finish before loading.");
+      if (data.format !== "saved-voronoi-geometry" || !data.result?.raw)
+        throw Error("Invalid saved Voronoi geometry.");
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+        $("vPlay").textContent = "PLAY STEPS";
+      }
+      result = structuredClone(data.result);
+      $("vSize").value = result.params.width;
+      for (const prefix of ["v_", "vn_"]) {
+        $(prefix + "index").max = result.params.count - 1;
+        $(prefix + "selected").max = result.params.count;
+      }
+      for (const [id] of fields) {
+        $("vn_" + id).value = result.params[id];
+        $("v_" + id).value = result.params[id];
+      }
+      stage = Math.max(0, Math.min(7, data.stage ?? 7));
+      wire = !!data.wire;
+      $("vWire").setAttribute("aria-pressed", wire);
+      editing.load(data.editing);
+      fitNext = true;
+      draw();
+      $("vReport").textContent = data.report;
+      $("vStatus").textContent =
+        "Saved Voronoi geometry restored without regenerating.";
+    },
+    thumbnail: () => canvasThumbnail(renderers[0], scene, camera),
   });
   [...nav.children].forEach(
     (button, i) =>

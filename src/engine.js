@@ -1,8 +1,10 @@
+import { validBalloonEdit, expandedEdit, editScale } from "./balloon-edit.js";
 import * as THREE from "three";
 import { MeshBVH } from "three-mesh-bvh";
 import { lifecycleMethods } from "./lifecycle.js";
 import { buildCavities } from "./boolean-pipeline.js";
 import { rebuildVolume } from "./volume-remesh.js";
+import { structuredSphere, smoothContactBand } from "./balloon-surface.js";
 
 export function random(seed) {
   let a = seed >>> 0;
@@ -177,6 +179,14 @@ export function spatial(raw) {
         }
       return n % 2 === 1;
     },
+    near(p, tolerance) {
+      return !!tree.closestPointToPoint(
+        new THREE.Vector3(...p),
+        {},
+        0,
+        tolerance,
+      );
+    },
     dispose() {
       g.dispose();
     },
@@ -297,7 +307,6 @@ export class BalloonEngine {
             }
           }
         }
-    space.dispose();
     const made = [];
     try {
       for (let i = 0; i < centers.length; i++) {
@@ -307,7 +316,8 @@ export class BalloonEngine {
         );
         const c = centers[i],
           r = radii[i];
-        let s = this.m.Manifold.sphere(r, p.quality).translate(c);
+        const contactPlanes = [];
+        let s = this.toSolid(structuredSphere(r, p.quality, c));
         const replace = (next) => {
           s.delete();
           s = next;
@@ -335,6 +345,7 @@ export class BalloonEngine {
                   (x, k) => (x - c[k]) / Math.max(d, 1e-12),
                 ),
                 h = (d * r) / (r + radii[j]) - p.clearance * 0.5;
+              contactPlanes.push({ normal: n, offset: dot(n, c) + h });
               replace(
                 s.trimByPlane(
                   n.map((v) => -v),
@@ -344,6 +355,7 @@ export class BalloonEngine {
             }
           }
         replace(s.intersect(this.boundary));
+        replace(this.softenContacts(s, contactPlanes, space));
         this.assert(
           s,
           `Balloon ${i + 1} collapsed; reduce count, radii, or gap`,
@@ -353,6 +365,8 @@ export class BalloonEngine {
     } catch (e) {
       for (const s of made) s.delete();
       throw e;
+    } finally {
+      space.dispose();
     }
     this.base = made;
     this.balloons = made.map((s) => s.translate([0, 0, 0]));
@@ -361,11 +375,48 @@ export class BalloonEngine {
     this.initLifecycle(p);
     return this.snapshot();
   }
+  softenContacts(solid, planes = [], surface = null, minimumVolume = 0) {
+    const raw = this.raw(solid),
+      b = bounds(raw),
+      tolerance = Math.max(...b.span) * 1e-6;
+    const contact = (p) =>
+      planes.some(
+        ({ normal, offset }) => Math.abs(dot(normal, p) - offset) <= tolerance,
+      ) || !!surface?.near(p, tolerance);
+    for (const strength of [0.23, 0.115, 0.0575]) {
+      const smooth = smoothContactBand(raw, contact, strength, 8);
+      if (!smooth.eligible.some(Boolean)) return solid.translate([0, 0, 0]);
+      const candidate = this.toSolid(smooth);
+      let outside;
+      let accepted = false;
+      try {
+        if (candidate.status() !== "NoError" || candidate.isEmpty()) continue;
+        const parts = candidate.decompose(),
+          connected = parts.length === 1;
+        parts.forEach((p) => p.delete());
+        if (
+          !connected ||
+          candidate.volume() < Math.max(solid.volume() * 0.85, minimumVolume)
+        )
+          continue;
+        outside = candidate.subtract(solid);
+        if (outside.volume() > this.allowedVolumeError(solid)) continue;
+        accepted = true;
+        return candidate;
+      } finally {
+        if (!accepted) candidate.delete();
+        outside?.delete();
+      }
+    }
+    // A tiny or pinched remainder takes precedence over softening. Never erode
+    // a balloon below the collision solver's minimum viable volume.
+    return solid.translate([0, 0, 0]);
+  }
   candidate(i, edit) {
     const c = this.centers[i];
     return this.base[i]
       .translate(c.map((x) => -x))
-      .scale(edit[3])
+      .scale(editScale(edit))
       .translate(c.map((x, k) => x + edit[k]));
   }
   allowedVolumeError(s, positionError = 0) {
@@ -433,13 +484,10 @@ export class BalloonEngine {
   edit(i, requested) {
     this.requireEditable(i);
     this.lastPop = null;
-    if (
-      !this.base[i] ||
-      requested.some((x) => !Number.isFinite(x)) ||
-      requested[3] < 0.1 ||
-      requested[3] > 3
-    )
+    if (!this.base[i] || !validBalloonEdit(requested))
       throw Error("Invalid individual balloon edit.");
+    const directional = requested.length === 7 || this.edits[i].length === 7;
+    if (directional) requested = expandedEdit(requested);
     let boundaryRoundingError = 0;
     if (this.positionErrorTolerance) {
       const outside = this.balloons[i].subtract(this.boundary),
@@ -448,9 +496,13 @@ export class BalloonEngine {
       if (leak > this.allowedVolumeError(this.balloons[i]))
         boundaryRoundingError = this.positionErrorTolerance;
     }
-    let accepted = this.edits[i].slice(),
+    let accepted = directional
+        ? expandedEdit(this.edits[i])
+        : this.edits[i].slice(),
       clamped = false;
-    for (const axis of [3, 0, 1, 2, 0, 1, 2]) {
+    for (const axis of directional
+      ? [3, 0, 1, 2, 0, 1, 2, 4, 5, 6]
+      : [3, 0, 1, 2, 0, 1, 2]) {
       let goal = accepted.slice();
       goal[axis] = requested[axis];
       let test = this.candidate(i, goal);
@@ -516,9 +568,17 @@ export class BalloonEngine {
           const overlap = contact.volume();
           contact.delete();
           if (overlap <= this.allowedVolumeError(solid)) continue;
-          const cut = solid.subtract(obstacle);
+          const cut = solid.subtract(obstacle),
+            surface = spatial(this.raw(obstacle));
+          let softened;
+          try {
+            softened = this.softenContacts(cut, [], surface, volume * 0.02);
+          } finally {
+            surface.dispose();
+            cut.delete();
+          }
           solid.delete();
-          solid = cut;
+          solid = softened;
           next.set(i, solid);
         }
         this.assert(solid, "Contact deformation");
@@ -548,13 +608,7 @@ export class BalloonEngine {
       throw Error("Saved edit count does not match balloon count.");
     const old = this.balloons;
     this.balloons = edits.map((e, i) => {
-      if (
-        e.length !== 4 ||
-        e.some((v) => !Number.isFinite(v)) ||
-        e[3] < 0.1 ||
-        e[3] > 3
-      )
-        throw Error("Invalid saved edit.");
+      if (!validBalloonEdit(e)) throw Error("Invalid saved edit.");
       return this.candidate(i, e);
     });
     try {

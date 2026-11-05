@@ -1,4 +1,6 @@
-import { quadObj } from "./quad-mesh.js";
+import { scaleAxisEdit } from "./balloon-edit.js";
+import { mountGeometryLibrary, canvasThumbnail } from "./geometry-library.js";
+import { quadObj, quadMesh } from "./quad-mesh.js";
 import "./style.css";
 import { initBalloonParty } from "./party.js";
 import { initVoronoi } from "./voronoi-ui.js";
@@ -373,7 +375,8 @@ document.addEventListener(
   "change",
   (event) => {
     const el = event.target;
-    if (el.closest("#voronoiWorkspace, #partyWorkspace")) return;
+    if (el.closest("#voronoiWorkspace, #partyWorkspace, .geometry-library"))
+      return;
     if (
       !el.id ||
       el.type === "file" ||
@@ -445,7 +448,10 @@ function syncDisplay(result, fit = false) {
   if (!selectedIDs.size && result.meta?.[selected])
     selectedIDs.add(result.meta[selected].id);
   select(selected, false, true);
-  const triangles = result.balloons.reduce((n, b) => n + b.indices.length, 0);
+  const triangles = result.balloons.reduce(
+    (n, b) => n + quadMesh(b).quads.length / 4,
+    0,
+  );
   $("meshStats").textContent =
     `${result.balloons.length} BALLOONS / ${triangles.toLocaleString()} QUADS`;
   $("fieldLabel").textContent = fileName.toUpperCase();
@@ -486,6 +492,7 @@ function select(i, additive = false, preserve = false) {
   ["moveX", "moveY", "moveZ", "scale"].forEach(
     (id, k) => ($(id).value = Number(e[k].toFixed(5))),
   );
+  $("scale1dFactor").value = e[4 + Number($("scale1dAxis").value)] ?? 1;
   renderMergeChoices();
   updateActionButtons();
   if (!busy && !undoing && display) lastUIState = captureUI();
@@ -523,6 +530,9 @@ function updateActionButtons() {
     "scale",
     "applyBalloonBtn",
     "resetBalloonBtn",
+    "scale1dAxis",
+    "scale1dFactor",
+    "applyScale1d",
   ])
     $(id).disabled = busy || !meta || locked;
   $("balloonState").textContent = meta
@@ -629,6 +639,7 @@ function onCanvasTransform(change) {
           display.edits[change.index],
           change.delta,
           change.ratio,
+          change.axisRatios,
         );
         const result = await request("edit", { index: change.index, edit });
         syncDisplay(result);
@@ -968,11 +979,33 @@ $("resetOperationsBtn").onclick = () =>
       "Pop, Freeze, and Merge reset. A fresh balloon field was generated.",
     );
   });
+$("scale1dAxis").onchange = () => {
+  $("scale1dFactor").value =
+    display?.edits[selected]?.[4 + Number($("scale1dAxis").value)] ?? 1;
+  if (view.tool === "scale1d") view.attachTool();
+};
+$("applyScale1d").onclick = () =>
+  task("Applying one-axis balloon scale…", async () => {
+    const edit = scaleAxisEdit(
+      display.edits[selected],
+      Number($("scale1dAxis").value),
+      Number($("scale1dFactor").value),
+    );
+    const result = await request("edit", { index: selected, edit });
+    syncDisplay(result);
+    status(
+      result.clamped
+        ? "Scale 1D limited by containment, frozen geometry or available space."
+        : "Scale 1D applied. The other axes and uniform scale are unchanged.",
+    );
+  });
 $("applyBalloonBtn").onclick = () =>
   task("Checking walls and neighboring balloons…", async () => {
     const edit = ["moveX", "moveY", "moveZ", "scale"].map((id) =>
       Number($(id).value),
     );
+    if (display.edits[selected].length === 7)
+      edit.push(...display.edits[selected].slice(4));
     const result = await request("edit", { index: selected, edit });
     syncDisplay(result);
     status(
@@ -1454,6 +1487,59 @@ $("cancelBtn").onclick = () => {
 };
 $("helpBtn").onclick = () => $("help").showModal();
 $("closeHelp").onclick = () => $("help").close();
+mountGeometryLibrary({
+  workspace: "balloon-build",
+  container: document.querySelector(".control-scroll"),
+  save: () => {
+    if (busy)
+      throw Error("Wait for the current operation to finish before saving.");
+    let built = null;
+    try {
+      if (output) built = currentOutput();
+    } catch {}
+    return {
+      project: projectData(),
+      output: built,
+      outputSettings: {
+        mode: $("outputMode").value,
+        quality: $("outputQuality").value,
+        resolution: $("rebuildResolution").value,
+        tolerance: $("tolerance").value,
+      },
+    };
+  },
+  load: async (data) => {
+    if (busy)
+      throw Error("Wait for the current operation to finish before loading.");
+    let loaded = false;
+    await task("Loading saved geometry…", async () => {
+      await restoreProject(data.project);
+      const settings = data.outputSettings;
+      if (settings) {
+        $("outputMode").value = settings.mode;
+        $("outputQuality").value = settings.quality;
+        $("rebuildResolution").value = settings.resolution;
+        $("tolerance").value = settings.tolerance;
+      }
+      if (data.output) {
+        output = data.output;
+        $("outputStatus").textContent = output.message;
+        $("outputStatus").classList.toggle(
+          "mesh-warning",
+          !!output.incomplete || !!output.qualityWarning,
+        );
+        view.output(output.mode === "shell" ? output.shells : output.shells[0]);
+      }
+      status(
+        "Saved geometry restored, including its built output when available.",
+      );
+      loaded = true;
+    });
+    if (!loaded) throw Error($("status").textContent);
+  },
+  thumbnail: () =>
+    canvasThumbnail(view.renderers[0], view.scene, view.perspective),
+});
 newWorker();
 const party = initBalloonParty(rhino);
 const partySend = document.createElement("div");

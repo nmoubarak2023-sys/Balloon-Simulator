@@ -1,4 +1,5 @@
-import { quadObj } from "./quad-mesh.js";
+import { mountGeometryLibrary, canvasThumbnail } from "./geometry-library.js";
+import { quadObj, quadMesh } from "./quad-mesh.js";
 import * as T from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
@@ -129,7 +130,10 @@ export function initBalloonParty(rhino) {
     $("pReport").textContent = JSON.stringify(
       {
         items: items.length,
-        quadFaces: items.reduce((n, o) => n + o.raw.indices.length, 0),
+        quadFaces: items.reduce(
+          (n, o) => n + quadMesh(o.raw).quads.length / 4,
+          0,
+        ),
         selected: selected + 1,
         position: o?.position,
         rotationDegrees: o?.rotation,
@@ -620,77 +624,92 @@ export function initBalloonParty(rhino) {
       "balloon-party.json",
     ),
   );
+  function loadPartyProject(d) {
+    if (
+      d.format !== "balloon-party" ||
+      d.version !== 1 ||
+      !Array.isArray(d.items)
+    )
+      throw Error("Choose a Balloon Party project.");
+    const next = d.items.map((o) => {
+      if (
+        !o.raw?.positions?.length ||
+        o.raw.positions.length % 3 ||
+        !o.raw.indices?.length ||
+        o.raw.indices.length % 3 ||
+        [...o.raw.positions, ...o.position, ...o.rotation, o.scale].some(
+          (v) => !Number.isFinite(v),
+        ) ||
+        o.position.length !== 3 ||
+        o.rotation.length !== 3 ||
+        o.scale <= 0 ||
+        o.raw.indices.some(
+          (v) =>
+            !Number.isInteger(v) || v < 0 || v >= o.raw.positions.length / 3,
+        )
+      )
+        throw Error("Invalid party geometry or transform.");
+      return {
+        ...o,
+        raw: {
+          positions: new Float64Array(o.raw.positions),
+          indices: new Uint32Array(o.raw.indices),
+        },
+      };
+    });
+    const savedClip = d.clip || {
+      enabled: false,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+    };
+    if (
+      !Array.isArray(savedClip.position) ||
+      savedClip.position.length !== 3 ||
+      !Array.isArray(savedClip.rotation) ||
+      savedClip.rotation.length !== 3 ||
+      [...savedClip.position, ...savedClip.rotation].some(
+        (v) => !Number.isFinite(v),
+      )
+    )
+      throw Error("Invalid clipping plane settings.");
+    checkpoint();
+    items = next;
+    clip = {
+      enabled: !!savedClip.enabled,
+      position: [...savedClip.position],
+      rotation: [...savedClip.rotation],
+    };
+    ghosted = !!d.ghosted;
+    selected = items.length
+      ? Math.max(0, Math.min(items.length - 1, Number(d.selected) || 0))
+      : -1;
+    draw();
+    fit();
+    message("Party project restored.");
+  }
   $("pLoad").onchange = async () => {
     try {
       const f = $("pLoad").files[0];
       if (!f) return;
       if (f.size > 80e6) throw Error("Choose a Party project under 80 MB.");
-      const d = JSON.parse(await f.text());
-      if (
-        d.format !== "balloon-party" ||
-        d.version !== 1 ||
-        !Array.isArray(d.items)
-      )
-        throw Error("Choose a Balloon Party project.");
-      const next = d.items.map((o) => {
-        if (
-          !o.raw?.positions?.length ||
-          o.raw.positions.length % 3 ||
-          !o.raw.indices?.length ||
-          o.raw.indices.length % 3 ||
-          [...o.raw.positions, ...o.position, ...o.rotation, o.scale].some(
-            (v) => !Number.isFinite(v),
-          ) ||
-          o.position.length !== 3 ||
-          o.rotation.length !== 3 ||
-          o.scale <= 0 ||
-          o.raw.indices.some(
-            (v) =>
-              !Number.isInteger(v) || v < 0 || v >= o.raw.positions.length / 3,
-          )
-        )
-          throw Error("Invalid party geometry or transform.");
-        return {
-          ...o,
-          raw: {
-            positions: new Float64Array(o.raw.positions),
-            indices: new Uint32Array(o.raw.indices),
-          },
-        };
-      });
-      checkpoint();
-      const savedClip = d.clip || {
-        enabled: false,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-      };
-      if (
-        !Array.isArray(savedClip.position) ||
-        savedClip.position.length !== 3 ||
-        !Array.isArray(savedClip.rotation) ||
-        savedClip.rotation.length !== 3 ||
-        [...savedClip.position, ...savedClip.rotation].some(
-          (v) => !Number.isFinite(v),
-        )
-      )
-        throw Error("Invalid clipping plane settings.");
-      items = next;
-      clip = {
-        enabled: !!savedClip.enabled,
-        position: [...savedClip.position],
-        rotation: [...savedClip.rotation],
-      };
-      ghosted = !!d.ghosted;
-      selected = items.length ? 0 : -1;
-      draw();
-      fit();
-      message("Party project restored.");
+      loadPartyProject(JSON.parse(await f.text()));
     } catch (e) {
       message(e.message);
     } finally {
       $("pLoad").value = "";
     }
   };
+  mountGeometryLibrary({
+    workspace: "party",
+    container: pane.querySelector(".voro-controls"),
+    save: () => {
+      if (!items.length)
+        throw Error("Add geometry to Balloon Party before saving.");
+      return { format: "balloon-party", version: 1, ...snapshot() };
+    },
+    load: loadPartyProject,
+    thumbnail: () => canvasThumbnail(renderers[0], scene, camera),
+  });
   addTechnicalFrames(pane);
   draw();
   fit();

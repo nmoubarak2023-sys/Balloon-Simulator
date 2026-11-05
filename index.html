@@ -49,6 +49,9 @@
             <button data-canvas-tool="scale" aria-pressed="false">
               SCALE BALLOON
             </button>
+            <button data-canvas-tool="scale1d" aria-pressed="false">
+              SCALE 1D
+            </button>
             <button data-canvas-tool="curve" aria-pressed="false">
               CURVE POINTS
             </button>
@@ -403,6 +406,27 @@
                       step="0.05"
                       value="1"
                     />
+                  </div>
+                  <div class="scale1d-controls">
+                    <label for="scale1dAxis">Scale 1D axis</label
+                    ><select id="scale1dAxis">
+                      <option value="0">X</option>
+                      <option value="1">Y</option>
+                      <option value="2">Z</option></select
+                    ><label for="scale1dFactor">Axis factor</label
+                    ><input
+                      id="scale1dFactor"
+                      type="number"
+                      min="0.1"
+                      max="3"
+                      step="0.05"
+                      value="1"
+                    /><button id="applyScale1d">APPLY SCALE 1D ↗</button>
+                    <p class="note">
+                      Scales one world axis about the balloon center. The other
+                      two dimensions and the uniform scale stay unchanged.
+                      Factor 1 resets this axis.
+                    </p>
                   </div>
                   <div class="pair">
                     <button id="resetBalloonBtn">RESET SELECTED</button

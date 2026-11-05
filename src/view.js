@@ -178,6 +178,8 @@ export class StudioView {
       orbit: "DRAG TO ORBIT · SCROLL TO ZOOM",
       move: "CLICK A BALLOON · DRAG IT OR ITS AXIS ARROWS · EMPTY SPACE ORBITS",
       scale: "CLICK A BALLOON · DRAG A SCALE HANDLE · RELEASE TO CHECK FIT",
+      scale1d:
+        "CHOOSE X / Y / Z IN INDIVIDUAL BALLOON · DRAG THE SINGLE AXIS HANDLE",
       boundary: "ENTER EXACT DEGREES ABOVE · OR DRAG A SNAPPED ROTATION RING",
       curve: "DRAG A CURVE POINT · AXIS ARROWS CONTROL X / Y / Z",
       curveMove: "CLICK A PINK CURVE · DRAG THE WHOLE CURVE OR ITS AXIS ARROWS",
@@ -216,7 +218,7 @@ export class StudioView {
       mode = "translate";
       this.target = { type: "curve", index: this.selectedCurve };
     } else if (
-      ["move", "scale"].includes(this.tool) &&
+      ["move", "scale", "scale1d"].includes(this.tool) &&
       this.meshes[this.selected]
     ) {
       if (this.data.meta?.[this.selected]?.frozen) {
@@ -227,11 +229,11 @@ export class StudioView {
       const c = this.data.centers[this.selected],
         edit = this.data.edits[this.selected];
       anchor = c.map((v, k) => v + edit[k]);
-      mode = this.tool === "scale" ? "scale" : "translate";
+      mode = ["scale", "scale1d"].includes(this.tool) ? "scale" : "translate";
       this.target = { type: "balloon", index: this.selected };
     }
     if (!anchor) {
-      if (["move", "scale"].includes(this.tool))
+      if (["move", "scale", "scale1d"].includes(this.tool))
         document.getElementById("selectionInfo").textContent =
           "NO BALLOON SELECTED";
       return;
@@ -243,6 +245,10 @@ export class StudioView {
       this.proxy.quaternion.fromArray(this.clipState.quaternion);
     this.proxy.scale.setScalar(1);
     this.proxy.updateMatrixWorld();
+    const axis = Number(document.getElementById("scale1dAxis")?.value || 0);
+    this.transform.showX = this.tool !== "scale1d" || axis === 0;
+    this.transform.showY = this.tool !== "scale1d" || axis === 1;
+    this.transform.showZ = this.tool !== "scale1d" || axis === 2;
     this.transform.setMode(mode);
     if (this.tool === "boundary" || this.tool === "clipRotate") {
       const degrees = Number(
@@ -282,7 +288,9 @@ export class StudioView {
       .compose(
         this.proxy.position,
         this.proxy.quaternion,
-        new T.Vector3().setScalar(this.previewRatio()),
+        this.tool === "scale1d"
+          ? new T.Vector3(...this.previewAxisRatios())
+          : new T.Vector3().setScalar(this.previewRatio()),
       )
       .multiply(
         new T.Matrix4().makeTranslation(
@@ -323,7 +331,21 @@ export class StudioView {
       }
     }
   }
+  previewAxisRatios() {
+    const edit = this.data.edits[this.activeTarget.index],
+      axis = Number(document.getElementById("scale1dAxis").value),
+      values = this.proxy.scale.toArray();
+    return [0, 1, 2].map((k) =>
+      k === axis
+        ? Math.max(
+            0.1 / (edit[4 + k] ?? 1),
+            Math.min(3 / (edit[4 + k] ?? 1), values[k]),
+          )
+        : 1,
+    );
+  }
   previewRatio() {
+    if (this.tool === "scale1d") return 1;
     const previous =
       this.activeTarget?.type === "balloon"
         ? this.data.edits[this.activeTarget.index][3]
@@ -342,7 +364,9 @@ export class StudioView {
         .compose(
           this.proxy.position,
           this.proxy.quaternion,
-          new T.Vector3().setScalar(ratio),
+          this.tool === "scale1d"
+            ? new T.Vector3(...this.previewAxisRatios())
+            : new T.Vector3().setScalar(ratio),
         )
         .multiply(
           new T.Matrix4().makeTranslation(
@@ -350,6 +374,8 @@ export class StudioView {
           ),
         );
     const changed = this.changed;
+    this.previewAxisRatiosForFinished =
+      this.tool === "scale1d" ? this.previewAxisRatios() : null;
     this.activeTarget = null;
     this.startAnchor = null;
     if (changed)
@@ -357,6 +383,9 @@ export class StudioView {
         ...target,
         delta,
         ratio,
+        ...(this.tool === "scale1d"
+          ? { axisRatios: this.previewAxisRatiosForFinished }
+          : {}),
         matrix: matrix.toArray(),
         clipping: this.clipState,
       });

@@ -37,7 +37,8 @@ test("all-quad conversion preserves closed surface, orientation, volume and sour
   const before = raw.positions.slice(),
     q = quadMesh(raw),
     tri = triangulate(q);
-  assert.equal(q.quads.length / 4, raw.indices.length);
+  assert.ok(q.quads.length / 4 < raw.indices.length);
+  assert.ok(q.pairedTriangles > (raw.indices.length / 3) * 0.8);
   assert.deepEqual(raw.positions, before);
   assert.deepEqual(
     Array.from(q.positions.slice(0, before.length)),
@@ -85,7 +86,7 @@ test("Rhino export round trip contains exclusively genuine quads with smooth ver
   const copy = r.File3dm.fromByteArray(doc.toByteArray()),
     obj = copy.objects().get(0),
     mesh = obj.geometry();
-  assert.equal(mesh.faces().count, raw.indices.length);
+  assert.equal(mesh.faces().count, quadMesh(raw).quads.length / 4);
   for (let i = 0; i < mesh.faces().count; i++)
     assert.equal(new Set(mesh.faces().get(i)).size, 4);
   assert.equal(mesh.normals().count, mesh.vertices().count);
@@ -95,4 +96,25 @@ test("Rhino export round trip contains exclusively genuine quads with smooth ver
   obj.delete();
   copy.delete();
   doc.delete();
+});
+
+test("a triangulated rectangle loses its internal diagonal in the quad layout", () => {
+  const raw = {
+    positions: new Float64Array([0, 0, 0, 2, 0, 0, 2, 1, 0, 0, 1, 0]),
+    indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
+  };
+  const q = quadMesh(raw);
+  assert.equal(q.pairedTriangles, 2);
+  assert.equal(q.quads.length / 4, 4);
+  for (let i = 0; i < q.quads.length; i += 4)
+    for (let k = 0; k < 4; k++) {
+      const a = q.quads[i + k],
+        b = q.quads[i + ((k + 1) % 4)],
+        p = q.positions;
+      const onDiagonal = (j) => Math.abs(p[j * 3] / 2 - p[j * 3 + 1]) < 1e-12;
+      assert.ok(
+        !(onDiagonal(a) && onDiagonal(b)),
+        "original diagonal must not appear among quad edges",
+      );
+    }
 });

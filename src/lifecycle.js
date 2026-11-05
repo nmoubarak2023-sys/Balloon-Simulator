@@ -1,3 +1,4 @@
+import { validBalloonEdit } from "./balloon-edit.js";
 import * as T from "three";
 import { MeshBVH } from "three-mesh-bvh";
 
@@ -189,10 +190,7 @@ export const lifecycleMethods = {
         ) ||
         c?.length !== 3 ||
         c.some((v) => !Number.isFinite(v)) ||
-        edit?.length !== 4 ||
-        edit.some((v) => !Number.isFinite(v)) ||
-        edit[3] < 0.1 ||
-        edit[3] > 3
+        !validBalloonEdit(edit)
       )
         throw Error("Invalid saved balloon metadata.");
       meta.members.forEach((v) => members.add(v));

@@ -63,15 +63,24 @@ export function transformMesh(raw, matrix) {
 export function uniformFactor(scale) {
   return scale.reduce((a, b) => (Math.abs(b - 1) > Math.abs(a - 1) ? b : a), 1);
 }
-export function draggedEdit(previous, delta, ratio = 1) {
+export function draggedEdit(previous, delta, ratio = 1, axisRatios = null) {
   if (
     !previous ||
     delta.some((v) => !Number.isFinite(v)) ||
     !Number.isFinite(ratio)
   )
     throw Error("Invalid canvas transform.");
-  return [
+  const edit = [
     ...delta.map((v, k) => previous[k] + v),
     Math.max(0.1, Math.min(3, previous[3] * ratio)),
   ];
+  if (previous.length === 7 || axisRatios)
+    for (let k = 0; k < 3; k++)
+      edit.push(
+        Math.max(
+          0.1,
+          Math.min(3, (previous[4 + k] ?? 1) * (axisRatios?.[k] ?? 1)),
+        ),
+      );
+  return edit;
 }

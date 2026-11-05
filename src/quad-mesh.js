@@ -1,7 +1,10 @@
-// Convert each triangle to three planar quads without moving the source surface.
+// Remove compatible triangle diagonals, then split the resulting polygons into quads.
 // Shared edge midpoints preserve connectivity, including along sharp boundaries.
+// UI geometry snapshots are immutable; reuse topology during canvas dragging.
+const cache = new WeakMap();
 export function quadMesh(raw) {
   if (raw.quads) return raw;
+  if (cache.has(raw)) return cache.get(raw);
   const positions = Array.from(raw.positions),
     quads = [],
     edges = new Map();
@@ -45,30 +48,137 @@ export function quadMesh(raw) {
     edges.set(key, index);
     return index;
   }
+  const triangles = [],
+    adjacency = new Map(),
+    candidates = [];
+  const edgeKey = (a, b) => (a < b ? `${a}:${b}` : `${b}:${a}`);
+  const point = (i) => positions.slice(i * 3, i * 3 + 3);
+  const sub = (a, b) => a.map((v, k) => v - b[k]);
+  const cross = (a, b) => [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+  const dot = (a, b) => a.reduce((v, x, k) => v + x * b[k], 0);
   for (let i = 0; i < raw.indices.length; i += 3) {
-    const [a, b, c] = raw.indices.subarray
-      ? raw.indices.subarray(i, i + 3)
-      : raw.indices.slice(i, i + 3);
-    const ab = midpoint(a, b),
-      bc = midpoint(b, c),
-      ca = midpoint(c, a),
-      center = positions.length / 3;
-    for (let k = 0; k < 3; k++)
-      positions.push(
-        positions[a * 3 + k] +
-          (positions[b * 3 + k] -
-            positions[a * 3 + k] +
-            (positions[c * 3 + k] - positions[a * 3 + k])) /
-            3,
-      );
-    averagedNormal([a, b, c]);
-    quads.push(a, ab, center, ca, b, bc, center, ab, c, ca, center, bc);
+    const face = Array.from(raw.indices.slice(i, i + 3)),
+      id = triangles.length;
+    triangles.push(face);
+    for (let k = 0; k < 3; k++) {
+      const a = face[k],
+        b = face[(k + 1) % 3],
+        c = face[(k + 2) % 3],
+        key = edgeKey(a, b);
+      if (!adjacency.has(key)) adjacency.set(key, []);
+      adjacency.get(key).push({ id, a, b, c });
+    }
   }
-  return {
+  for (const uses of adjacency.values()) {
+    if (uses.length !== 2) continue;
+    const [u, v] = uses;
+    if (u.a !== v.b || u.b !== v.a || u.c === v.c) continue;
+    const face = [u.a, v.c, u.b, u.c],
+      p = face.map(point);
+    const n1 = cross(sub(point(u.b), point(u.a)), sub(point(u.c), point(u.a))),
+      n2 = cross(sub(point(v.b), point(v.a)), sub(point(v.c), point(v.a)));
+    const l1 = Math.hypot(...n1),
+      l2 = Math.hypot(...n2);
+    if (!l1 || !l2 || dot(n1, n2) / (l1 * l2) < Math.cos(Math.PI / 4)) continue;
+    const normal = n1.map((v, k) => v + n2[k]);
+    let score = 0,
+      valid = true;
+    const lengths = [];
+    for (let k = 0; k < 4; k++) {
+      const e1 = sub(p[(k + 1) % 4], p[k]),
+        e2 = sub(p[(k + 3) % 4], p[k]);
+      const l = Math.hypot(...e1),
+        r = Math.hypot(...e2);
+      if (
+        !l ||
+        !r ||
+        dot(cross(e1, e2), normal) <= Math.hypot(...normal) * l * r * 1e-12
+      ) {
+        valid = false;
+        break;
+      }
+      lengths.push(l);
+      score += Math.abs(dot(e1, e2) / (l * r));
+    }
+    if (!valid) continue;
+    score += Math.max(...lengths) / Math.min(...lengths) - 1;
+    candidates.push({ ids: [u.id, v.id], face, diagonal: [u.a, u.b], score });
+  }
+  candidates.sort(
+    (a, b) => a.score - b.score || a.ids[0] - b.ids[0] || a.ids[1] - b.ids[1],
+  );
+  const matches = new Map(),
+    graph = Array.from({ length: triangles.length }, () => []);
+  for (const c of candidates) {
+    for (const id of c.ids) graph[id].push(c);
+    if (!c.ids.some((id) => matches.has(id)))
+      for (const id of c.ids) matches.set(id, c);
+  }
+  // Recover adjacent pairs left stranded by greedy quality ordering, especially
+  // in narrow Boolean strips. Alternating paths change connectivity only.
+  function augment(id, seen, depth) {
+    if (depth === 0) return null;
+    for (const edge of graph[id]) {
+      const other = edge.ids[0] === id ? edge.ids[1] : edge.ids[0];
+      if (seen.has(other) || matches.get(id) === edge) continue;
+      const match = matches.get(other);
+      if (!match) return [edge];
+      const next = match.ids[0] === other ? match.ids[1] : match.ids[0];
+      if (seen.has(next)) continue;
+      const visited = new Set(seen);
+      visited.add(other);
+      visited.add(next);
+      const path = augment(next, visited, depth - 1);
+      if (path) return [edge, ...path];
+    }
+    return null;
+  }
+  for (let pass = 0; pass < 2; pass++)
+    for (let id = 0; id < triangles.length; id++)
+      if (!matches.has(id)) {
+        const path = augment(id, new Set([id]), 4);
+        if (path)
+          for (const c of path)
+            for (const vertex of c.ids) matches.set(vertex, c);
+      }
+  const used = new Set(matches.keys()),
+    polygons = [...new Set(matches.values())];
+  triangles.forEach((face, id) => {
+    if (!used.has(id)) polygons.push({ face });
+  });
+  for (const { face, diagonal } of polygons) {
+    const mids = face.map((v, k) => midpoint(v, face[(k + 1) % face.length]));
+    const center = positions.length / 3;
+    const centerIds = diagonal || face;
+    for (let k = 0; k < 3; k++) {
+      const base = positions[centerIds[0] * 3 + k];
+      positions.push(
+        base +
+          centerIds.reduce((n, j) => n + positions[j * 3 + k] - base, 0) /
+            centerIds.length,
+      );
+    }
+    averagedNormal(centerIds);
+    for (let k = 0; k < face.length; k++)
+      quads.push(
+        face[k],
+        mids[k],
+        center,
+        mids[(k + face.length - 1) % face.length],
+      );
+  }
+  const result = {
     positions: new Float64Array(positions),
     quads: new Uint32Array(quads),
     normals: new Float32Array(normals),
+    pairedTriangles: used.size,
   };
+  cache.set(raw, result);
+  return result;
 }
 
 export function quadObj(raw, name = "QuadMesh", offset = 1) {

@@ -1,3 +1,7 @@
+import {
+  validBalloonEdit,
+  scaleAxisEdit,
+} from "./balloon-edit.js";
 import * as T from "three";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { validateCurves } from "./iterations.js";
@@ -26,7 +30,7 @@ export function createVoronoiEditing({
     section
       .querySelectorAll("[for]")
       .forEach((el) => (el.htmlFor = "ve_" + el.htmlFor));
-    for (const note of section.querySelectorAll(".note"))
+    for (const note of section.querySelectorAll(".note:not(.scale1d-controls .note)"))
       note.textContent =
         sourceId === "curveSelect"
           ? "Up to five pink curves. Drag a complete curve with MOVE CURVE, or edit its points with CURVE POINTS. Strength and influence are shared. Enable pressure applies immediately."
@@ -37,10 +41,10 @@ export function createVoronoiEditing({
   const $ = (id) => pane.querySelector("#ve_" + id);
   const tools = document.createElement("div");
   tools.className = "canvas-tools";
-  tools.innerHTML = ["orbit", "move", "scale", "curve", "curveMove"]
+  tools.innerHTML = ["orbit", "move", "scale", "scale1d", "curve", "curveMove"]
     .map(
       (key, i) =>
-        `<button data-ve-tool="${key}" aria-pressed="${i === 0}">${["ORBIT", "MOVE BALLOON", "SCALE BALLOON", "CURVE POINTS", "MOVE CURVE"][i]}</button>`,
+        `<button data-ve-tool="${key}" aria-pressed="${i === 0}">${["ORBIT", "MOVE BALLOON", "SCALE BALLOON", "SCALE 1D", "CURVE POINTS", "MOVE CURVE"][i]}</button>`,
     )
     .join("");
   pane.querySelector(".voro-steps").after(tools);
@@ -191,6 +195,7 @@ export function createVoronoiEditing({
     ["moveX", "moveY", "moveZ", "scale"].forEach(
       (id, k) => ($(id).value = Number(edit[k].toFixed(4))),
     );
+    $("scale1dFactor").value = edit[4 + Number($("scale1dAxis").value)] ?? 1;
     $("balloonState").textContent =
       selectedId === null
         ? "No balloon selected."
@@ -230,7 +235,13 @@ export function createVoronoiEditing({
     proxy.scale.setScalar(1);
     proxy.quaternion.identity();
     proxy.updateMatrixWorld();
-    transform.setMode(tool === "scale" ? "scale" : "translate");
+    const axis = Number($("scale1dAxis").value);
+    transform.showX = tool !== "scale1d" || axis === 0;
+    transform.showY = tool !== "scale1d" || axis === 1;
+    transform.showZ = tool !== "scale1d" || axis === 2;
+    transform.setMode(
+      ["scale", "scale1d"].includes(tool) ? "scale" : "translate",
+    );
     transform.setSpace("world");
     transform.attach(proxy);
   }
@@ -238,7 +249,7 @@ export function createVoronoiEditing({
     tool = next;
     for (const b of tools.children)
       b.setAttribute("aria-pressed", b.dataset.veTool === tool);
-    if (["move", "scale"].includes(tool)) showBalloons();
+    if (["move", "scale", "scale1d"].includes(tool)) showBalloons();
     paint();
   }
   tools
@@ -289,6 +300,18 @@ export function createVoronoiEditing({
         );
         edit[3] = Math.max(0.1, Math.min(3, baseline.edit[3] * ratio));
       }
+      if (baseline.tool === "scale1d") {
+        const axis = Number($("scale1dAxis").value),
+          factor = Math.max(
+            0.1,
+            Math.min(
+              3,
+              (baseline.edit[4 + axis] ?? 1) * proxy.scale.getComponent(axis),
+            ),
+          );
+        const axial = scaleAxisEdit(edit, axis, factor);
+        edit.splice(0, edit.length, ...axial);
+      }
       edits[baseline.id] = edit;
       const mesh = meshes.find((o) => o.userData.balloonId === baseline.id);
       if (mesh) {
@@ -300,7 +323,14 @@ export function createVoronoiEditing({
               .add(new T.Vector3(...delta))
               .toArray(),
           )
-          .multiply(new T.Matrix4().makeScale(scale, scale, scale))
+          .multiply(
+            new T.Matrix4().makeScale(
+              ...[0, 1, 2].map(
+                (k) =>
+                  (scale * (edit[4 + k] ?? 1)) / (baseline.edit[4 + k] ?? 1),
+              ),
+            ),
+          )
           .multiply(
             new T.Matrix4().makeTranslation(
               ...baseline.anchor.clone().negate().toArray(),
@@ -362,7 +392,7 @@ export function createVoronoiEditing({
             hit = ray.intersectObjects(meshes, false)[0];
             if (!hit) return;
             selectedId = hit.object.userData.balloonId;
-            if (tool !== "scale") tool = "move";
+            if (!["scale", "scale1d"].includes(tool)) tool = "move";
           }
         }
         ui();
@@ -400,7 +430,13 @@ export function createVoronoiEditing({
         if (ray.ray.intersectPlane(drag.plane, p)) {
           if (baseline?.tool === "scale")
             proxy.scale.setScalar(Math.exp((drag.screenY - e.clientY) * 0.01));
-          else proxy.position.copy(drag.anchor).add(p.sub(drag.start));
+          else if (baseline?.tool === "scale1d") {
+            proxy.scale.setScalar(1);
+            proxy.scale.setComponent(
+              Number($("scale1dAxis").value),
+              Math.exp((drag.screenY - e.clientY) * 0.01),
+            );
+          } else proxy.position.copy(drag.anchor).add(p.sub(drag.start));
           proxy.updateMatrixWorld();
           preview();
         }
@@ -494,12 +530,31 @@ export function createVoronoiEditing({
     ui();
     setTool("move");
   };
+  $("scale1dAxis").onchange = () => {
+    ui();
+    attach();
+  };
+  $("applyScale1d").onclick = () => {
+    if (selectedId === null || busy) return;
+    try {
+      edits[selectedId] = scaleAxisEdit(
+        edits[selectedId] || [0, 0, 0, 1],
+        Number($("scale1dAxis").value),
+        Number($("scale1dFactor").value),
+      );
+      commit();
+    } catch (e) {
+      pane.querySelector("#vStatus").textContent = e.message;
+    }
+  };
   $("applyBalloonBtn").onclick = () => {
     const values = ["moveX", "moveY", "moveZ", "scale"].map((id) =>
       Number($(id).value),
     );
     if (!values.every(Number.isFinite) || values[3] < 0.1 || values[3] > 3)
       return;
+    if (edits[selectedId]?.length === 7)
+      values.push(...edits[selectedId].slice(4));
     edits[selectedId] = values;
     commit();
   };
@@ -568,16 +623,7 @@ export function createVoronoiEditing({
     }
     const nextCurves = validateCurves(data.curves);
     const nextEdits = data.edits || {};
-    if (
-      Object.values(nextEdits).some(
-        (e) =>
-          !Array.isArray(e) ||
-          e.length !== 4 ||
-          !e.every(Number.isFinite) ||
-          e[3] < 0.1 ||
-          e[3] > 3,
-      )
-    )
+    if (Object.values(nextEdits).some((e) => !validBalloonEdit(e)))
       throw Error("Invalid saved balloon edits.");
     curves = nextCurves;
     edits = structuredClone(nextEdits);
@@ -587,7 +633,9 @@ export function createVoronoiEditing({
       Math.min(curves[active].length - 1, Number(data.point) || 0),
     );
     selectedId = Number.isInteger(data.selectedId) ? data.selectedId : null;
-    tool = ["orbit", "move", "scale", "curve", "curveMove"].includes(data.tool)
+    tool = ["orbit", "move", "scale", "scale1d", "curve", "curveMove"].includes(
+      data.tool,
+    )
       ? data.tool
       : "orbit";
     for (const id of ["strength", "influence"])
