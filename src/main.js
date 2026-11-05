@@ -227,7 +227,7 @@ function captureUI() {
     controls: Object.fromEntries(
       [
         ...document.querySelectorAll(
-          "main:not(#voronoiWorkspace):not(#partyWorkspace) input[id]:not([type=file]),main:not(#voronoiWorkspace):not(#partyWorkspace) select[id]",
+          "main:not(#voronoiWorkspace):not(#partyWorkspace):not(#columnWorkspace) input[id]:not([type=file]),main:not(#voronoiWorkspace):not(#partyWorkspace):not(#columnWorkspace) select[id]",
         ),
       ].map((el) => [
         el.id,
@@ -375,7 +375,11 @@ document.addEventListener(
   "change",
   (event) => {
     const el = event.target;
-    if (el.closest("#voronoiWorkspace, #partyWorkspace, .geometry-library"))
+    if (
+      el.closest(
+        "#voronoiWorkspace, #partyWorkspace, #columnWorkspace, .geometry-library",
+      )
+    )
       return;
     if (
       !el.id ||

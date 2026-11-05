@@ -1,3 +1,4 @@
+import { initColumns } from "./column-ui.js";
 import { mountGeometryLibrary, canvasThumbnail } from "./geometry-library.js";
 import { quadObj, quadMesh } from "./quad-mesh.js";
 import { addTechnicalFrames } from "./frames.js";
@@ -16,7 +17,7 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
   nav.className = "simulation-tabs";
   nav.setAttribute("aria-label", "Simulation workspaces");
   nav.innerHTML =
-    '<button aria-pressed="true">VORONOI BALLOONS</button><button aria-pressed="false">BALLOON BUILD</button><button aria-pressed="false">BALLOON PARTY</button>';
+    '<button aria-pressed="true">VORONOI BALLOONS</button><button aria-pressed="false">COLUMN POPulate</button><button aria-pressed="false">BALLOON BUILD</button><button aria-pressed="false">BALLOON PARTY</button>';
   existing.before(nav);
   existing.after(pane);
   const fields = [
@@ -574,7 +575,7 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
         positions: new Float64Array(enclosure.raw.positions),
         indices: new Uint32Array(enclosure.raw.indices),
       };
-      await useAsBoundary(raw, () => nav.children[1].click());
+      await useAsBoundary(raw, () => nav.children[2].click());
       $("vStatus").textContent =
         "Enclosure copied to Balloon Build. This Voronoi project is unchanged.";
     } finally {
@@ -655,17 +656,20 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
     },
     thumbnail: () => canvasThumbnail(renderers[0], scene, camera),
   });
+  const columns = initColumns(rhino, accepted);
   [...nav.children].forEach(
     (button, i) =>
       (button.onclick = () => {
-        existing.hidden = i !== 1;
+        existing.hidden = i !== 2;
         pane.hidden = i !== 0;
-        party.pane.hidden = i !== 2;
-        document.querySelector(".header-actions").hidden = i !== 1;
+        party.pane.hidden = i !== 3;
+        columns.pane.hidden = i !== 1;
+        document.querySelector(".header-actions").hidden = i !== 2;
         [...nav.children].forEach((b, j) =>
           b.setAttribute("aria-pressed", i === j),
         );
-        if (i === 2) party.show();
+        if (i === 3) party.show();
+        if (i === 1) columns.show();
         if (i === 0) {
           resize();
           if (!result && !pending) generate();
@@ -712,5 +716,5 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
   }
   frame();
   nav.children[0].click();
-  return { showParty: () => nav.children[2].click() };
+  return { showParty: () => nav.children[3].click() };
 }
