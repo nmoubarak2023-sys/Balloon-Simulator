@@ -5,7 +5,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { geometry } from "./view.js";
 import { addRhinoMesh } from "./rhino-io.js";
-export function initVoronoi(workerFactory, rhino) {
+export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
   const existing = document.querySelector("main"),
     pane = document.createElement("main");
   pane.id = "voronoiWorkspace";
@@ -14,7 +14,7 @@ export function initVoronoi(workerFactory, rhino) {
   nav.className = "simulation-tabs";
   nav.setAttribute("aria-label", "Simulation workspaces");
   nav.innerHTML =
-    '<button aria-pressed="true">BALLOON BUILD</button><button aria-pressed="false">VORONOI BALLOONS</button>';
+    '<button aria-pressed="true">VORONOI BALLOONS</button><button aria-pressed="false">BALLOON BUILD</button><button aria-pressed="false">BALLOON PARTY</button>';
   existing.before(nav);
   existing.after(pane);
   const fields = [
@@ -29,7 +29,7 @@ export function initVoronoi(workerFactory, rhino) {
     ["spacing", "Mesh spacing (ft)", 2, 0.5, 10, 0.5],
     ["smoothing", "Valley smoothing passes", 4, 0, 20, 1],
   ];
-  pane.innerHTML = `<div class="voro-layout"><section class="panel"><div class="panel-heading"><span>PERSPECTIVE <small>01 / VORONOI BALLOONS</small></span><button id="vFit">FIT ↗</button></div><div class="canvas-tools"><button id="vRoof" aria-pressed="true">ENCLOSURE</button><button id="vSpheres" aria-pressed="false">BALLOONS</button><button id="vWire" aria-pressed="false">WIRE</button></div><div id="vPerspective" class="voro-canvas"></div><div class="viewer-footer">ROOF / FLAT FLOOR / PERIMETER ONLY</div></section><aside><section class="panel"><div class="panel-heading">PLAN VIEW <small>02 / CELLS & SELECTED SEEDS</small></div><div id="vPlan" class="voro-plan"></div></section><section class="panel"><div class="panel-heading">CONTROL PANEL <small>03 / INDEPENDENT SIMULATION</small></div><div class="voro-controls"><label>Boundary rectangle (ft)<select id="vSize"><option value="160">160 × 100</option><option value="80" selected>80 × 50</option><option value="40">40 × 25</option></select></label>${fields.map(([id, label, value, min, max, step]) => `<div class="control"><label for="v_${id}">${label}</label><input id="vn_${id}" type="number" value="${value}" min="${min}" max="${max}" step="${step}" aria-label="${label}"><input id="v_${id}" type="range" value="${value}" min="${min}" max="${max}" step="${step}"></div>`).join("")}<button id="vGenerate" class="primary">GENERATE ENCLOSURE ↗</button><p class="note">Nearest-point selection retains original Voronoi cells. The roof uses the highest edited balloon surface; smoothing changes interior heights only. Disconnected footprints remain separate and are reported.</p><div class="pair"><button id="vObj">EXPORT .OBJ</button><button id="v3dm">EXPORT .3DM</button></div><button id="vSave">SAVE SETTINGS & DATA</button><label class="button" for="vLoad">OPEN VORONOI PROJECT</label><input hidden id="vLoad" type="file" accept=".json"><pre id="vReport" class="iteration-report">Generate an enclosure to check its mesh.</pre></div></section></aside></div><div class="status-bar" id="vStatus" role="status">Ready to generate.</div>`;
+  pane.innerHTML = `<div class="voro-layout"><section class="panel"><div class="panel-heading"><span>PERSPECTIVE <small>01 / VORONOI BALLOONS</small></span><button id="vFit">FIT ↗</button></div><div class="canvas-tools"><button id="vRoof" aria-pressed="true">ENCLOSURE</button><button id="vSpheres" aria-pressed="false">BALLOONS</button><button id="vPickAnchor" aria-pressed="false">PICK ANCHOR CENTER</button><button id="vWire" aria-pressed="false">WIRE</button></div><div id="vPerspective" class="voro-canvas"></div><div class="viewer-footer">ROOF / FLAT FLOOR / PERIMETER ONLY</div></section><aside><section class="panel"><div class="panel-heading">PLAN VIEW <small>02 / CELLS & SELECTED SEEDS</small></div><div id="vPlan" class="voro-plan"></div></section><section class="panel"><div class="panel-heading">CONTROL PANEL <small>03 / INDEPENDENT SIMULATION</small></div><div class="voro-controls"><label>Boundary rectangle (ft)<select id="vSize"><option value="160">160 × 100</option><option value="80" selected>80 × 50</option><option value="40">40 × 25</option></select></label>${fields.map(([id, label, value, min, max, step]) => `<div class="control"><label for="v_${id}">${label}</label><input id="vn_${id}" type="number" value="${value}" min="${min}" max="${max}" step="${step}" aria-label="${label}"><input id="v_${id}" type="range" value="${value}" min="${min}" max="${max}" step="${step}"></div>`).join("")}<button id="vGenerate" class="primary">GENERATE ENCLOSURE ↗</button><p class="note">Nearest-point selection retains original Voronoi cells. The roof uses the highest edited balloon surface; smoothing changes interior heights only. Disconnected footprints remain separate and are reported.</p><div class="pair"><button id="vObj">EXPORT .OBJ</button><button id="v3dm">EXPORT .3DM</button></div><button id="vUseBoundary" class="primary">USE AS BALLOON BUILD CONTAINER ↗</button><p class="note">Copies the current closed enclosure into Balloon Build and generates a new balloon field inside it. Voronoi settings stay independent. Use Balloon Build Undo to return to its previous model. Dimensions remain in feet.</p><button id="vSave">SAVE SETTINGS & DATA</button><label class="button" for="vLoad">OPEN VORONOI PROJECT</label><input hidden id="vLoad" type="file" accept=".json"><pre id="vReport" class="iteration-report">Generate an enclosure to check its mesh.</pre></div></section></aside></div><div class="status-bar" id="vStatus" role="status">Ready to generate.</div>`;
   const stages = [
     "Boundary",
     "Seed points",
@@ -52,6 +52,7 @@ export function initVoronoi(workerFactory, rhino) {
       .join("") +
     '</select><button id="vNext">NEXT →</button><button id="vPlay">PLAY STEPS</button><p id="vStepDescription" class="note"></p>';
   pane.querySelector(".canvas-tools").after(stepbar);
+  let anchorDown;
   let stage = 0,
     timer;
   const $ = (id) => pane.querySelector("#" + id);
@@ -130,6 +131,7 @@ export function initVoronoi(workerFactory, rhino) {
     clear(group);
     clear(diagram);
     if (!result) return;
+    $("vPickAnchor").setAttribute("aria-pressed", stage >= 1 && stage <= 3);
     $("vRoof").setAttribute("aria-pressed", stage === 7);
     $("vSpheres").setAttribute("aria-pressed", stage === 4 || stage === 5);
     const balloonMeshes = [];
@@ -197,7 +199,7 @@ export function initVoronoi(workerFactory, rhino) {
       "Rectangle boundary on XY.",
       "Deterministic candidate centers inside the rectangle.",
       "Original Voronoi territories for every seed.",
-      "Nearest seeds to the chosen anchor; original cells are retained.",
+      "Click a Voronoi center to set the anchor index and rebuild its nearest cluster. Drag empty space to orbit.",
       "One sphere per selected seed, clipped to the rectangle.",
       "Sphere preview split at the horizontal floor plane.",
       "Union of original sphere sections, filled as one floor footprint.",
@@ -240,8 +242,12 @@ export function initVoronoi(workerFactory, rhino) {
         line.material.dispose();
       }
       const dot = new T.Mesh(
-        new T.CircleGeometry(result.params.width * 0.006, 10),
+        new T.CircleGeometry(
+          result.params.width * (i === result.params.index ? 0.01 : 0.006),
+          16,
+        ),
         new T.MeshBasicMaterial({
+          side: T.DoubleSide,
           color:
             i === result.params.index
               ? 0xffffff
@@ -338,6 +344,78 @@ export function initVoronoi(workerFactory, rhino) {
     };
     worker.postMessage({ id: 1, action: "voronoi", params: parameters() });
   }
+  // Capture center clicks before balloon/curve editing, while leaving orbit drags alone.
+  const anchorCanvas = renderers[0].domElement;
+  function centerAt(e) {
+    if (!result || pending || stage < 1 || stage > 3) return null;
+    const rect = anchorCanvas.getBoundingClientRect();
+    camera.updateMatrixWorld();
+    let nearest = null,
+      distance = 16;
+    result.points.forEach(([x, y], index) => {
+      const p = new T.Vector3(x, y, 0.1).project(camera);
+      if (p.z < -1 || p.z > 1) return;
+      const d = Math.hypot(
+        e.clientX - rect.left - ((p.x + 1) * rect.width) / 2,
+        e.clientY - rect.top - ((1 - p.y) * rect.height) / 2,
+      );
+      if (d < distance) {
+        nearest = index;
+        distance = d;
+      }
+    });
+    return nearest;
+  }
+  anchorCanvas.addEventListener(
+    "pointerdown",
+    (e) => {
+      anchorDown = null;
+      if (e.button !== 0) return;
+      const index = centerAt(e);
+      if (index === null) return;
+      anchorDown = { index, x: e.clientX, y: e.clientY };
+      e.stopImmediatePropagation();
+    },
+    true,
+  );
+  anchorCanvas.addEventListener(
+    "pointerup",
+    (e) => {
+      const down = anchorDown;
+      anchorDown = null;
+      if (!down) return;
+      e.stopImmediatePropagation();
+      if (
+        pending ||
+        Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5 ||
+        centerAt(e) !== down.index
+      )
+        return;
+      $("v_index").value = $("vn_index").value = down.index;
+      stage = 3;
+      draw();
+      generate();
+    },
+    true,
+  );
+  anchorCanvas.addEventListener(
+    "pointercancel",
+    () => {
+      anchorDown = null;
+    },
+    true,
+  );
+  $("vPickAnchor").onclick = () => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+      $("vPlay").textContent = "PLAY STEPS";
+    }
+    stage = 3;
+    draw();
+    $("vStatus").textContent =
+      "Click a Voronoi center in the perspective view to set its anchor index. The white center is the current anchor.";
+  };
   fields.forEach(([id]) => {
     const range = $("v_" + id),
       number = $("vn_" + id);
@@ -470,6 +548,29 @@ export function initVoronoi(workerFactory, rhino) {
       doc.delete();
     }
   });
+  $("vUseBoundary").onclick = guarded(async () => {
+    if (pending)
+      throw Error("Wait for the Voronoi enclosure to finish building.");
+    const enclosure = accepted();
+    if (!enclosure.closed)
+      throw Error(
+        "The Voronoi enclosure must be closed before it can be used as a container. Review the mesh report.",
+      );
+    const button = $("vUseBoundary");
+    button.disabled = true;
+    try {
+      // Copy rather than sharing geometry with either workspace's mutable state.
+      const raw = {
+        positions: new Float64Array(enclosure.raw.positions),
+        indices: new Uint32Array(enclosure.raw.indices),
+      };
+      await useAsBoundary(raw, () => nav.children[1].click());
+      $("vStatus").textContent =
+        "Enclosure copied to Balloon Build. This Voronoi project is unchanged.";
+    } finally {
+      button.disabled = false;
+    }
+  });
   $("vSave").onclick = guarded(() =>
     download(
       JSON.stringify(
@@ -502,13 +603,15 @@ export function initVoronoi(workerFactory, rhino) {
   [...nav.children].forEach(
     (button, i) =>
       (button.onclick = () => {
-        existing.hidden = !!i;
-        pane.hidden = !i;
-        document.querySelector(".header-actions").hidden = !!i;
+        existing.hidden = i !== 1;
+        pane.hidden = i !== 0;
+        party.pane.hidden = i !== 2;
+        document.querySelector(".header-actions").hidden = i !== 1;
         [...nav.children].forEach((b, j) =>
           b.setAttribute("aria-pressed", i === j),
         );
-        if (i) {
+        if (i === 2) party.show();
+        if (i === 0) {
           resize();
           if (!result && !pending) generate();
         }
@@ -553,4 +656,6 @@ export function initVoronoi(workerFactory, rhino) {
     editing?.afterPlan();
   }
   frame();
+  nav.children[0].click();
+  return { showParty: () => nav.children[2].click() };
 }

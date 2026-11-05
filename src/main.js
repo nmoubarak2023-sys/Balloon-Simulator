@@ -1,4 +1,5 @@
 import "./style.css";
+import { initBalloonParty } from "./party.js";
 import { initVoronoi } from "./voronoi-ui.js";
 import * as T from "three";
 import { STLLoader } from "three/addons/loaders/STLLoader.js";
@@ -223,7 +224,7 @@ function captureUI() {
     controls: Object.fromEntries(
       [
         ...document.querySelectorAll(
-          "main:not(#voronoiWorkspace) input[id]:not([type=file]),main:not(#voronoiWorkspace) select[id]",
+          "main:not(#voronoiWorkspace):not(#partyWorkspace) input[id]:not([type=file]),main:not(#voronoiWorkspace):not(#partyWorkspace) select[id]",
         ),
       ].map((el) => [
         el.id,
@@ -371,7 +372,7 @@ document.addEventListener(
   "change",
   (event) => {
     const el = event.target;
-    if (el.closest("#voronoiWorkspace")) return;
+    if (el.closest("#voronoiWorkspace, #partyWorkspace")) return;
     if (
       !el.id ||
       el.type === "file" ||
@@ -1140,9 +1141,10 @@ $("wireBtn").onclick = () => {
   view.meshes.forEach((m) =>
     m.children.forEach((c) => (c.visible = view.wire)),
   );
-  if (view.result) view.result.traverse((object) => {
-    if (object.material) object.material.wireframe = view.wire;
-  });
+  if (view.result)
+    view.result.traverse((object) => {
+      if (object.material) object.material.wireframe = view.wire;
+    });
 };
 $("outputBtn").onclick = () =>
   task("Building and verifying mesh output…", async () => {
@@ -1458,9 +1460,50 @@ $("cancelBtn").onclick = () => {
 $("helpBtn").onclick = () => $("help").showModal();
 $("closeHelp").onclick = () => $("help").close();
 newWorker();
-initVoronoi(
+const party = initBalloonParty(rhino);
+const partySend = document.createElement("div");
+partySend.innerHTML =
+  '<label for="partySource">Send to Balloon Party</label><select id="partySource"><option value="output">Built output</option><option value="balloons">Balloons only</option><option value="assembly">Container + balloons</option></select><button id="sendParty" class="primary">SEND TO BALLOON PARTY ↗</button><p class="note">Copies this geometry into the assembly workspace. Use Built output for your shell assembly or Boolean result. Party edits leave this simulation unchanged.</p>';
+$("exportStl").after(partySend);
+$("sendParty").onclick = () =>
+  task("Sending snapshot to Balloon Party…", async () => {
+    if (!display) throw Error("Generate balloons before sending geometry.");
+    const source = $("partySource").value;
+    const raw =
+      source === "output"
+        ? mergedRaw(currentOutput().shells)
+        : mergedRaw(
+            source === "balloons"
+              ? display.balloons
+              : [display.boundary, ...display.balloons],
+          );
+    if (!raw.indices.length) throw Error("No geometry is available to send.");
+    party.add(
+      raw,
+      `${fileName} / ${source === "output" ? output.mode : source}`,
+    );
+    workspaces.showParty();
+  });
+const workspaces = initVoronoi(
   () => new Worker(new URL("./worker.js", import.meta.url), { type: "module" }),
   rhino,
+  async (raw, showBalloonBuild) => {
+    if (busy)
+      throw Error("Wait for the current Balloon Build operation to finish.");
+    canonical(raw); // Validate before changing either workspace.
+    showBalloonBuild();
+    await task("Using Voronoi enclosure as container…", async () => {
+      await loadBoundary(raw, "Voronoi Balloons / enclosure (feet)");
+      meshChoices = [{ name: "Voronoi enclosure (feet)", raw: boundary }];
+      $("meshSelect").replaceChildren(new Option(meshChoices[0].name, 0));
+      $("meshSelect").hidden = true;
+      $("meshFile").value = "";
+      status(
+        "Voronoi enclosure loaded as container (feet). New balloons generated inside it. Undo restores the previous Balloon Build model.",
+      );
+    });
+  },
+  party,
 );
 demo();
 task("Generating demonstration balloon field…", () => generate(true));

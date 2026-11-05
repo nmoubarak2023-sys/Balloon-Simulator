@@ -1163,3 +1163,59 @@ footer {
   flex-basis: 100%;
   margin: 4px 0;
 }
+
+#partyWorkspace input[type="text"] {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px;
+  color: var(--cyan, #21e0ed);
+  background: #000;
+  border: 1px solid #21e0ed44;
+  font: inherit;
+}
+#partyWorkspace .triple input {
+  width: 100%;
+  min-width: 0;
+}
+#partyWorkspace .triple label {
+  min-width: 0;
+}
+
+.party-balloon-flight {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  overflow: hidden;
+}
+.party-flying-balloon {
+  position: absolute;
+  width: clamp(65px, 8vw, 110px);
+  height: auto;
+  left: var(--lane);
+  bottom: -210px;
+  animation: party-balloon-rise 2.8s cubic-bezier(0.25, 0.5, 0.5, 1)
+    var(--delay) both;
+}
+@keyframes party-balloon-rise {
+  0% {
+    transform: translate(0, 0) rotate(-8deg);
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.95;
+  }
+  60% {
+    transform: translate(var(--sway), -65vh) rotate(8deg);
+    opacity: 0.95;
+  }
+  100% {
+    transform: translate(0, calc(-100vh - 240px)) rotate(-5deg);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .party-balloon-flight {
+    display: none;
+  }
+}
