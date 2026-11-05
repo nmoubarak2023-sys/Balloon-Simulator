@@ -3,6 +3,42 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
 import { bounds } from "./engine.js";
 import { uniformFactor } from "./interaction.js";
+import { quadMesh } from "./quad-mesh.js";
+export function quadWire(raw, origin = [0, 0, 0], color = 0x9effff) {
+  const q = quadMesh(raw),
+    edges = [],
+    seen = new Set();
+  for (let i = 0; i < q.quads.length; i += 4)
+    for (let k = 0; k < 4; k++) {
+      const a = q.quads[i + k],
+        b = q.quads[i + ((k + 1) % 4)],
+        key = a < b ? `${a}:${b}` : `${b}:${a}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        edges.push(a, b);
+      }
+    }
+  const g = new T.BufferGeometry();
+  g.setAttribute(
+    "position",
+    new T.BufferAttribute(
+      Float32Array.from(q.positions, (v, i) => v - origin[i % 3]),
+      3,
+    ),
+  );
+  g.setIndex(edges);
+  const wire = new T.LineSegments(
+    g,
+    new T.LineBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false,
+    }),
+  );
+  wire.userData.quadWire = true;
+  return wire;
+}
 export function geometry(raw, origin = [0, 0, 0]) {
   const g = new T.BufferGeometry();
   g.setAttribute(
@@ -604,16 +640,7 @@ export class StudioView {
         );
       m.userData.index = i;
       this.meshes.push(m);
-      const wire = new T.Mesh(
-        g,
-        new T.MeshBasicMaterial({
-          color: 0x9effff,
-          wireframe: true,
-          transparent: true,
-          opacity: 0.12,
-          depthWrite: false,
-        }),
-      );
+      const wire = quadWire(raw);
       wire.visible = this.wire;
       m.add(wire);
       this.field.add(m);
@@ -830,7 +857,7 @@ export class StudioView {
           geometry(shell, origin),
           new T.MeshPhysicalMaterial({
             color: container ? 0x21e0ed : 0x4e9fa9,
-            wireframe: this.wire,
+            wireframe: false,
             metalness: container ? 0 : 0.25,
             roughness: 0.28,
             side: T.DoubleSide,
@@ -840,6 +867,9 @@ export class StudioView {
           }),
         );
         mesh.position.fromArray(origin);
+        const wire = quadWire(shell, origin);
+        wire.visible = this.wire;
+        mesh.add(wire);
         this.result.add(mesh);
       }
       this.field.add(this.result);

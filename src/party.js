@@ -1,10 +1,11 @@
+import { quadObj } from "./quad-mesh.js";
 import * as T from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { TransformControls } from "three/addons/controls/TransformControls.js";
-import { geometry } from "./view.js";
+import { geometry, quadWire } from "./view.js";
 import { bounds } from "./engine.js";
 import { addTechnicalFrames } from "./frames.js";
-import { addRhinoMesh } from "./rhino-io.js";
+import { addRhinoQuadMesh } from "./rhino-io.js";
 import { isUndoShortcut } from "./history.js";
 
 export function initBalloonParty(rhino) {
@@ -128,7 +129,7 @@ export function initBalloonParty(rhino) {
     $("pReport").textContent = JSON.stringify(
       {
         items: items.length,
-        triangles: items.reduce((n, o) => n + o.raw.indices.length / 3, 0),
+        quadFaces: items.reduce((n, o) => n + o.raw.indices.length, 0),
         selected: selected + 1,
         position: o?.position,
         rotationDegrees: o?.rotation,
@@ -164,8 +165,10 @@ export function initBalloonParty(rhino) {
     transform.detach();
     for (const o of [...root.children]) {
       root.remove(o);
-      o.geometry.dispose();
-      o.material.dispose();
+      o.traverse((child) => {
+        child.geometry?.dispose();
+        child.material?.dispose();
+      });
     }
     items.forEach((o, i) => {
       const mesh = new T.Mesh(
@@ -180,12 +183,15 @@ export function initBalloonParty(rhino) {
           roughness: 0.3,
           metalness: 0.2,
           side: T.DoubleSide,
-          wireframe: wire,
+          wireframe: false,
         }),
       );
       mesh.position.fromArray(o.position);
       mesh.rotation.set(...o.rotation.map(T.MathUtils.degToRad));
       mesh.scale.setScalar(o.scale);
+      const lines = quadWire(o.raw, [0, 0, 0], 0xffffff);
+      lines.visible = wire;
+      mesh.add(lines);
       mesh.userData.item = i;
       root.add(mesh);
     });
@@ -245,7 +251,8 @@ export function initBalloonParty(rhino) {
     clipMesh.scale.setScalar(span * 1.3);
     const normal = new T.Vector3(0, 0, 1).applyEuler(clipMesh.rotation);
     clipPlane.setFromNormalAndCoplanarPoint(normal, clipMesh.position);
-    root.children.forEach((mesh) => {
+    root.traverse((mesh) => {
+      if (!mesh.material) return;
       mesh.material.clippingPlanes = clip.enabled ? [clipPlane] : [];
       mesh.material.needsUpdate = true;
     });
@@ -582,21 +589,20 @@ export function initBalloonParty(rhino) {
       offset = 1;
     items.forEach((o, i) => {
       const raw = transformed(o, i);
-      text += `o Item_${i + 1}\n`;
-      for (let j = 0; j < raw.positions.length; j += 3)
-        text += `v ${raw.positions.slice(j, j + 3).join(" ")}\n`;
-      for (let j = 0; j < raw.indices.length; j += 3)
-        text += `f ${Array.from(raw.indices.slice(j, j + 3), (v) => v + offset).join(" ")}\n`;
-      offset += raw.positions.length / 3;
+      const q = quadObj(raw, `Item_${i + 1}`, offset);
+      text += q.text;
+      offset += q.vertices;
     });
     download(text, "balloon-party.obj");
-    message("Party exported as OBJ.");
+    message("Party exported as quad mesh OBJ.");
   });
   $("p3dm").onclick = guarded(async () => {
     const r = await rhino(),
       doc = new r.File3dm();
     try {
-      items.forEach((o, i) => addRhinoMesh(r, doc, transformed(o, i), o.name));
+      items.forEach((o, i) =>
+        addRhinoQuadMesh(r, doc, transformed(o, i), o.name),
+      );
       download(doc.toByteArray(), "balloon-party.3dm");
       message(
         "Party exported as separate Rhino mesh objects. Coordinates retain source model units.",

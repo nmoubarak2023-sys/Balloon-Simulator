@@ -1,3 +1,4 @@
+import { quadObj } from "./quad-mesh.js";
 import "./style.css";
 import { initBalloonParty } from "./party.js";
 import { initVoronoi } from "./voronoi-ui.js";
@@ -7,7 +8,7 @@ import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import { STLExporter } from "three/addons/exporters/STLExporter.js";
 import { StudioView, geometry, rawGeometry } from "./view.js";
 import { bounds, canonical } from "./engine.js";
-import { rhinoRaw, addRhinoMesh } from "./rhino-io.js";
+import { rhinoRaw, addRhinoQuadMesh } from "./rhino-io.js";
 import { transformMesh, draggedEdit, rotationMatrix } from "./interaction.js";
 import { rotateClippingPlane } from "./interaction.js";
 import { addTechnicalFrames } from "./frames.js";
@@ -444,12 +445,9 @@ function syncDisplay(result, fit = false) {
   if (!selectedIDs.size && result.meta?.[selected])
     selectedIDs.add(result.meta[selected].id);
   select(selected, false, true);
-  const triangles = result.balloons.reduce(
-    (n, b) => n + b.indices.length / 3,
-    0,
-  );
+  const triangles = result.balloons.reduce((n, b) => n + b.indices.length, 0);
   $("meshStats").textContent =
-    `${result.balloons.length} BALLOONS / ${triangles.toLocaleString()} TRIANGLES`;
+    `${result.balloons.length} BALLOONS / ${triangles.toLocaleString()} QUADS`;
   $("fieldLabel").textContent = fileName.toUpperCase();
   drawCurves();
   if (view.clipState) view.setClip(view.clipState);
@@ -1143,7 +1141,7 @@ $("wireBtn").onclick = () => {
   );
   if (view.result)
     view.result.traverse((object) => {
-      if (object.material) object.material.wireframe = view.wire;
+      if (object.userData.quadWire) object.visible = view.wire;
     });
 };
 $("outputBtn").onclick = () =>
@@ -1197,15 +1195,12 @@ $("exportObj").onclick = () =>
     let txt = "# Balloon Build — " + o.mode + "\no BalloonBuild\n",
       offset = 1;
     o.shells.forEach((s, n) => {
-      txt += `g shell_${n}\n`;
-      for (let i = 0; i < s.positions.length; i += 3)
-        txt += `v ${s.positions[i]} ${s.positions[i + 1]} ${s.positions[i + 2]}\n`;
-      for (let i = 0; i < s.indices.length; i += 3)
-        txt += `f ${s.indices[i] + offset} ${s.indices[i + 1] + offset} ${s.indices[i + 2] + offset}\n`;
-      offset += s.positions.length / 3;
+      const q = quadObj(s, `shell_${n}`, offset);
+      txt += q.text;
+      offset += q.vertices;
     });
     download(txt, `balloon-build-${o.mode}.obj`, "text/plain");
-    status("OBJ exported in model coordinates.");
+    status("Quad mesh OBJ exported in model coordinates.");
   });
 $("exportStl").onclick = () =>
   task("Preparing STL export…", async () => {
@@ -1223,7 +1218,7 @@ $("exportStl").onclick = () =>
       precisionCheck.degenerateFaces
         ? `STL exported with ${precisionCheck.degenerateFaces} degenerate faces at single precision. Use Rhino or OBJ to retain double-precision detail.`
         : o.mode === "shell"
-          ? "STL exported. Shell assembly preserves nested shells; it is not a unified solid."
+          ? "STL exported as triangles (STL cannot store quads). Shell assembly preserves separate shells."
           : "STL exported from the displayed Boolean mesh. STL stores single-precision coordinates; review the output warnings.",
       !!precisionCheck.degenerateFaces || !!o.incomplete,
     );
@@ -1233,7 +1228,7 @@ $("export3dm").onclick = () =>
     const o = currentOutput(),
       r = await rhino(),
       doc = new r.File3dm();
-    addRhinoMesh(r, doc, mergedRaw(o.shells), `Balloon Build / ${o.mode}`);
+    addRhinoQuadMesh(r, doc, mergedRaw(o.shells), `Balloon Build / ${o.mode}`);
     download(
       doc.toByteArray(),
       `balloon-build-${o.mode}.3dm`,
@@ -1243,7 +1238,7 @@ $("export3dm").onclick = () =>
     status(
       o.incomplete
         ? "Rhino mesh exported with remaining geometric warnings. Review the quality report before fabrication."
-        : "Rhino mesh exported. Use your original model units when importing.",
+        : "Rhino quad mesh exported. Use your original model units when importing.",
     );
   });
 function projectData() {

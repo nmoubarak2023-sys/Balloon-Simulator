@@ -1,10 +1,11 @@
+import { quadObj } from "./quad-mesh.js";
 import { addTechnicalFrames } from "./frames.js";
 import { createVoronoiEditing } from "./voronoi-editing.js";
 import * as T from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
-import { geometry } from "./view.js";
-import { addRhinoMesh } from "./rhino-io.js";
+import { geometry, rawGeometry, quadWire } from "./view.js";
+import { addRhinoQuadMesh } from "./rhino-io.js";
 export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
   const existing = document.querySelector("main"),
     pane = document.createElement("main");
@@ -141,7 +142,7 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
         roughness: 0.3,
         metalness: 0.2,
         side: T.DoubleSide,
-        wireframe: wire,
+        wireframe: false,
       });
       let raw = result.raw;
       if (stage === 6)
@@ -164,7 +165,11 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
       const g = geometry(raw),
         smooth = toCreasedNormals(g, Math.PI / 4);
       if (smooth !== g) g.dispose();
-      group.add(new T.Mesh(smooth, mat));
+      const mesh = new T.Mesh(smooth, mat),
+        lines = quadWire(raw);
+      lines.visible = wire;
+      mesh.add(lines);
+      group.add(mesh);
     } else if (stage === 4 || stage === 5) {
       const { width: w, height: h, floor } = result.params;
       const planes = [
@@ -185,11 +190,16 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
             transparent: true,
             opacity: 0.7,
             side: T.DoubleSide,
-            wireframe: wire,
+            wireframe: false,
             clippingPlanes: stage === 4 ? planes.slice(0, 4) : planes,
           }),
         );
         if (!s.raw) mesh.position.set(...s.center);
+        const lines = quadWire(s.raw || rawGeometry(mesh.geometry));
+        lines.material.clippingPlanes =
+          stage === 4 ? planes.slice(0, 4) : planes;
+        lines.visible = wire;
+        mesh.add(lines);
         mesh.userData.balloonId = s.id;
         balloonMeshes.push(mesh);
         group.add(mesh);
@@ -322,7 +332,7 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
           nakedEdges: q.boundaryEdges,
           nonManifoldEdges: q.nonManifoldEdges,
           degenerateFaces: q.degenerateFaces,
-          triangles: q.triangles,
+          quadFaces: q.triangles * 3,
           volumeCubicFeet: result.volume,
           selectedOriginalIndices: result.ids,
         },
@@ -530,11 +540,7 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
   };
   $("vObj").onclick = guarded(() => {
     const { raw } = accepted();
-    let text = "o VoronoiBalloons\n";
-    for (let i = 0; i < raw.positions.length; i += 3)
-      text += `v ${raw.positions.slice(i, i + 3).join(" ")}\n`;
-    for (let i = 0; i < raw.indices.length; i += 3)
-      text += `f ${Array.from(raw.indices.slice(i, i + 3), (v) => v + 1).join(" ")}\n`;
+    const text = quadObj(raw, "VoronoiBalloons").text;
     download(text, "voronoi-balloons.obj");
   });
   $("v3dm").onclick = guarded(async () => {
@@ -542,7 +548,7 @@ export function initVoronoi(workerFactory, rhino, useAsBoundary, party) {
       doc = new r.File3dm();
     try {
       doc.settings().modelUnitSystem = r.UnitSystem.Feet;
-      addRhinoMesh(r, doc, accepted().raw, "Voronoi Balloons / enclosure");
+      addRhinoQuadMesh(r, doc, accepted().raw, "Voronoi Balloons / enclosure");
       download(doc.toByteArray(), "voronoi-balloons.3dm");
     } finally {
       doc.delete();
