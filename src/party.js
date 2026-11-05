@@ -708,7 +708,7 @@ export function initBalloonParty(rhino) {
     flight.innerHTML = [0, 1, 2]
       .map(
         (i) =>
-          `<svg class="party-flying-balloon" style="--lane:${20 + i * 27}%;--delay:${i * 0.22}s;--sway:${i % 2 ? "-" : "+"}45px" viewBox="0 0 100 190"><defs><radialGradient id="partyBalloon${i}" cx="30%" cy="25%" r="80%"><stop stop-color="#a7ecff"/><stop offset="0.4" stop-color="#1EC1F2"/><stop offset="1" stop-color="#1299c4"/></radialGradient></defs><ellipse cx="50" cy="52" rx="36" ry="46" fill="url(#partyBalloon${i})" stroke="#1EC1F2"/><path d="M50 98l-5 7h10z" fill="#1EC1F2"/><path d="M50 104c-25 27 25 45 0 80" fill="none" stroke="#1EC1F2" stroke-width="1.5"/></svg>`,
+          `<svg class="party-flying-balloon" style="--lane:${20 + i * 27}%;--delay:${i * 0.22}s;--sway:${i % 2 ? "-" : "+"}45px" viewBox="0 0 100 190"><defs><radialGradient id="partyBalloon${i}" cx="30%" cy="25%" r="80%"><stop stop-color="#a7ecff"/><stop offset="0.4" stop-color="#1EC1F2"/><stop offset="1" stop-color="#1299c4"/></radialGradient></defs><ellipse cx="50" cy="52" rx="36" ry="46" fill="url(#partyBalloon${i})" stroke="#FFFFFF" stroke-width="2"/><path d="M50 98l-5 7h10z" fill="#1EC1F2" stroke="#FFFFFF" stroke-width="1.5"/><path d="M50 104c-25 27 25 45 0 80" fill="none" stroke="#FFFFFF" stroke-width="1.5"/></svg>`,
       )
       .join("");
     pane.append(flight);
