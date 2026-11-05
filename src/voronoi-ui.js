@@ -1,5 +1,6 @@
 import * as T from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { toCreasedNormals } from "three/addons/utils/BufferGeometryUtils.js";
 import { geometry } from "./view.js";
 import { addRhinoMesh } from "./rhino-io.js";
 export function initVoronoi(workerFactory, rhino) {
@@ -27,6 +28,30 @@ export function initVoronoi(workerFactory, rhino) {
     ["smoothing", "Valley smoothing passes", 4, 0, 20, 1],
   ];
   pane.innerHTML = `<div class="voro-layout"><section class="panel"><div class="panel-heading"><span>PERSPECTIVE <small>01 / VORONOI BALLOONS</small></span><button id="vFit">FIT ↗</button></div><div class="canvas-tools"><button id="vRoof" aria-pressed="true">ENCLOSURE</button><button id="vSpheres" aria-pressed="false">BALLOONS</button><button id="vWire" aria-pressed="false">WIRE</button></div><div id="vPerspective" class="voro-canvas"></div><div class="viewer-footer">ROOF / FLAT FLOOR / PERIMETER ONLY</div></section><aside><section class="panel"><div class="panel-heading">PLAN VIEW <small>02 / CELLS & SELECTED SEEDS</small></div><div id="vPlan" class="voro-plan"></div></section><section class="panel"><div class="panel-heading">CONTROL PANEL <small>03 / INDEPENDENT SIMULATION</small></div><div class="voro-controls"><label>Boundary rectangle (ft)<select id="vSize"><option value="160">160 × 100</option><option value="80" selected>80 × 50</option><option value="40">40 × 25</option></select></label>${fields.map(([id, label, value, min, max, step]) => `<div class="control"><label for="v_${id}">${label}</label><input id="vn_${id}" type="number" value="${value}" min="${min}" max="${max}" step="${step}" aria-label="${label}"><input id="v_${id}" type="range" value="${value}" min="${min}" max="${max}" step="${step}"></div>`).join("")}<button id="vGenerate" class="primary">GENERATE ENCLOSURE ↗</button><p class="note">Nearest-point selection retains original Voronoi cells. The roof uses the highest original sphere surface; smoothing changes interior heights only. Disconnected footprints remain separate and are reported.</p><div class="pair"><button id="vObj">EXPORT .OBJ</button><button id="v3dm">EXPORT .3DM</button></div><button id="vSave">SAVE SETTINGS & DATA</button><label class="button" for="vLoad">OPEN VORONOI PROJECT</label><input hidden id="vLoad" type="file" accept=".json"><pre id="vReport" class="iteration-report">Generate an enclosure to check its mesh.</pre></div></section></aside></div><div class="status-bar" id="vStatus" role="status">Ready to generate.</div>`;
+  const stages = [
+    "Boundary",
+    "Seed points",
+    "Voronoi cells",
+    "Nearest cluster",
+    "Rectangle-clipped balloons",
+    "Floor-clipped balloons",
+    "United floor footprint",
+    "Smooth enclosure",
+  ];
+  const stepbar = document.createElement("div");
+  stepbar.className = "voro-steps";
+  stepbar.innerHTML =
+    '<button id="vPrevious">← BACK</button><select id="vStage" aria-label="Construction step">' +
+    stages
+      .map(
+        (name, i) =>
+          '<option value="' + i + '">' + (i + 1) + " / " + name + "</option>",
+      )
+      .join("") +
+    '</select><button id="vNext">NEXT →</button><button id="vPlay">PLAY STEPS</button><p id="vStepDescription" class="note"></p>';
+  pane.querySelector(".canvas-tools").after(stepbar);
+  let stage = 0,
+    timer;
   const $ = (id) => pane.querySelector("#" + id);
   let worker,
     result,
@@ -102,7 +127,9 @@ export function initVoronoi(workerFactory, rhino) {
     clear(group);
     clear(diagram);
     if (!result) return;
-    if (mode === "roof") {
+    $("vRoof").setAttribute("aria-pressed", stage === 7);
+    $("vSpheres").setAttribute("aria-pressed", stage === 4 || stage === 5);
+    if (stage === 7 || stage === 6) {
       const mat = new T.MeshPhysicalMaterial({
         color: 0x4e9fa9,
         roughness: 0.3,
@@ -110,8 +137,29 @@ export function initVoronoi(workerFactory, rhino) {
         side: T.DoubleSide,
         wireframe: wire,
       });
-      group.add(new T.Mesh(geometry(result.raw), mat));
-    } else {
+      let raw = result.raw;
+      if (stage === 6)
+        raw = {
+          positions: raw.positions,
+          indices: Uint32Array.from(
+            Array.from({ length: raw.indices.length / 3 }, (_, i) =>
+              Array.from(raw.indices.slice(i * 3, i * 3 + 3)),
+            )
+              .filter((t) =>
+                t.every(
+                  (j) =>
+                    Math.abs(raw.positions[j * 3 + 2] - result.params.floor) <
+                    1e-8,
+                ),
+              )
+              .flat(),
+          ),
+        };
+      const g = geometry(raw),
+        smooth = toCreasedNormals(g, Math.PI / 4);
+      if (smooth !== g) g.dispose();
+      group.add(new T.Mesh(smooth, mat));
+    } else if (stage === 4 || stage === 5) {
       const { width: w, height: h, floor } = result.params;
       const planes = [
         new T.Plane(new T.Vector3(1, 0, 0), 0),
@@ -132,14 +180,42 @@ export function initVoronoi(workerFactory, rhino) {
             opacity: 0.7,
             side: T.DoubleSide,
             wireframe: wire,
-            clippingPlanes: planes,
+            clippingPlanes: stage === 4 ? planes.slice(0, 4) : planes,
           }),
         );
         mesh.position.set(...s.center, 0);
         group.add(mesh);
       }
     }
-    const chosen = new Set(result.ids);
+    const descriptions = [
+      "Rectangle boundary on XY.",
+      "Deterministic candidate centers inside the rectangle.",
+      "Original Voronoi territories for every seed.",
+      "Nearest seeds to the chosen anchor; original cells are retained.",
+      "One sphere per selected seed, clipped to the rectangle.",
+      "Sphere preview split at the horizontal floor plane.",
+      "Union of original sphere sections, filled as one floor footprint.",
+      "Highest original sphere roof, relaxed interior heights, flat bottom and perimeter closure.",
+    ];
+    $("vStage").value = stage;
+    $("vStepDescription").textContent = descriptions[stage];
+    $("vPrevious").disabled = stage === 0;
+    $("vNext").disabled = stage === 7;
+    const { width: w, height: h } = result.params;
+    diagram.add(
+      new T.LineLoop(
+        new T.BufferGeometry().setFromPoints(
+          [
+            [0, 0],
+            [w, 0],
+            [w, h],
+            [0, h],
+          ].map((p) => new T.Vector3(...p, 0)),
+        ),
+        new T.LineBasicMaterial({ color: 0x21e0ed }),
+      ),
+    );
+    const chosen = new Set(stage >= 3 ? result.ids : []);
     result.cells.forEach((cell, i) => {
       if (!cell.length) return;
       const line = new T.LineLoop(
@@ -152,7 +228,11 @@ export function initVoronoi(workerFactory, rhino) {
           opacity: chosen.has(i) ? 1 : 0.45,
         }),
       );
-      diagram.add(line);
+      if (stage >= 2) diagram.add(line);
+      else {
+        line.geometry.dispose();
+        line.material.dispose();
+      }
       const dot = new T.Mesh(
         new T.CircleGeometry(result.params.width * 0.006, 10),
         new T.MeshBasicMaterial({
@@ -165,9 +245,13 @@ export function initVoronoi(workerFactory, rhino) {
         }),
       );
       dot.position.set(...result.points[i], 0.1);
-      diagram.add(dot);
+      if (stage >= 1) diagram.add(dot);
+      else {
+        dot.geometry.dispose();
+        dot.material.dispose();
+      }
     });
-    for (const loop of result.loops) {
+    for (const loop of stage >= 6 ? result.loops : []) {
       const outline = new T.LineLoop(
         new T.BufferGeometry().setFromPoints(
           loop.map((p) => new T.Vector3(...p, 0.2)),
@@ -175,6 +259,14 @@ export function initVoronoi(workerFactory, rhino) {
         new T.LineBasicMaterial({ color: 0xffffff }),
       );
       diagram.add(outline);
+    }
+    if (stage <= 3) {
+      const overlay = diagram.clone(true);
+      overlay.traverse((o) => {
+        if (o.geometry) o.geometry = o.geometry.clone();
+        if (o.material) o.material = o.material.clone();
+      });
+      group.add(overlay);
     }
     if (fitNext) {
       fit();
@@ -265,16 +357,52 @@ export function initVoronoi(workerFactory, rhino) {
   $("vGenerate").onclick = generate;
   $("vFit").onclick = fit;
   $("vRoof").onclick = () => {
+    stage = 7;
     mode = "roof";
     $("vRoof").setAttribute("aria-pressed", true);
     $("vSpheres").setAttribute("aria-pressed", false);
     draw();
   };
   $("vSpheres").onclick = () => {
+    stage = 4;
     mode = "spheres";
     $("vRoof").setAttribute("aria-pressed", false);
     $("vSpheres").setAttribute("aria-pressed", true);
     draw();
+  };
+  $("vStage").onchange = () => {
+    stage = Number($("vStage").value);
+    draw();
+  };
+  $("vPrevious").onclick = () => {
+    stage = Math.max(0, stage - 1);
+    draw();
+  };
+  $("vNext").onclick = () => {
+    stage = Math.min(7, stage + 1);
+    draw();
+  };
+  $("vPlay").onclick = () => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+      $("vPlay").textContent = "PLAY STEPS";
+      return;
+    }
+    stage = 0;
+    draw();
+    $("vPlay").textContent = "PAUSE";
+    timer = setInterval(() => {
+      if (pane.hidden) return;
+      if (stage === 7) {
+        clearInterval(timer);
+        timer = null;
+        $("vPlay").textContent = "PLAY STEPS";
+        return;
+      }
+      stage++;
+      draw();
+    }, 1800);
   };
   $("vWire").onclick = () => {
     wire = !wire;

@@ -1147,3 +1147,19 @@ footer {
     height: 420px;
   }
 }
+.voro-steps {
+  padding: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  border-bottom: 1px solid #21e0ed44;
+}
+.voro-steps select {
+  flex: 1;
+  min-width: 180px;
+}
+.voro-steps p {
+  flex-basis: 100%;
+  margin: 4px 0;
+}

@@ -13,6 +13,7 @@
   "keywords": [],
   "type": "module",
   "dependencies": {
+    "cdt2d": "^1.0.0",
     "manifold-3d": "^3.5.4",
     "rhino3dm": "^8.35.0",
     "three": "^0.187.0",

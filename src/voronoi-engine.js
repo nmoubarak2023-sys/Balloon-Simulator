@@ -1,3 +1,4 @@
+import cdt2d from "cdt2d";
 import { random } from "./engine.js";
 import { meshQuality, signedVolume } from "./mesh-quality.js";
 export function voronoiBuild(m, p) {
@@ -106,43 +107,73 @@ export function voronoiBuild(m, p) {
     const loops = footprint.toPolygons();
     if (!loops.length)
       throw Error("The floor plane does not intersect the balloons.");
-    let xy = loops.flat().map((a) => [...a]),
-      tris = m.triangulate(loops).map((t) => [...t]);
-    // Conforming midpoint subdivision: each shared edge receives the same vertex.
-    for (let pass = 0; pass < 10; pass++) {
-      let max = 0;
-      for (const t of tris)
-        for (let k = 0; k < 3; k++) {
-          const a = xy[t[k]],
-            b = xy[t[(k + 1) % 3]];
-          max = Math.max(max, Math.hypot(a[0] - b[0], a[1] - b[1]));
+    // Uniform interior samples and constrained Delaunay triangles avoid the
+    // long fan diagonals inherited from triangulating the outline alone.
+    const xy = [],
+      constraints = [];
+    for (const loop of loops) {
+      const ids = [];
+      for (let i = 0; i < loop.length; i++) {
+        const a = loop[i],
+          b = loop[(i + 1) % loop.length],
+          n = Math.max(
+            1,
+            Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / spacing),
+          );
+        for (let j = 0; j < n; j++) {
+          ids.push(xy.length);
+          xy.push([
+            a[0] + ((b[0] - a[0]) * j) / n,
+            a[1] + ((b[1] - a[1]) * j) / n,
+          ]);
         }
-      if (max <= spacing * 1.5) break;
-      if (tris.length * 4 > 240000)
-        throw Error(
-          "Mesh spacing is too fine for this footprint. Increase spacing.",
-        );
-      const mids = new Map(),
-        mid = (a, b) => {
-          const key = Math.min(a, b) + ":" + Math.max(a, b);
-          if (!mids.has(key)) {
-            mids.set(key, xy.length);
-            xy.push([(xy[a][0] + xy[b][0]) / 2, (xy[a][1] + xy[b][1]) / 2]);
-          }
-          return mids.get(key);
-        };
-      tris = tris.flatMap(([a, b, c]) => {
-        const ab = mid(a, b),
-          bc = mid(b, c),
-          ca = mid(c, a);
-        return [
-          [a, ab, ca],
-          [ab, b, bc],
-          [ca, bc, c],
-          [ab, bc, ca],
-        ];
-      });
+      }
+      ids.forEach((id, i) => constraints.push([id, ids[(i + 1) % ids.length]]));
     }
+    const inside = ([x, y]) => {
+      let hit = false;
+      for (const loop of loops)
+        for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+          const a = loop[i],
+            b = loop[j];
+          if (
+            a[1] > y !== b[1] > y &&
+            x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0]
+          )
+            hit = !hit;
+        }
+      return hit;
+    };
+    const distance = (p, a, b) => {
+      const dx = b[0] - a[0],
+        dy = b[1] - a[1],
+        t = Math.max(
+          0,
+          Math.min(
+            1,
+            ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy),
+          ),
+        );
+      return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+    };
+    for (
+      let row = 0, y = spacing * 0.5;
+      y < h;
+      y += (spacing * Math.sqrt(3)) / 2, row++
+    )
+      for (let x = spacing * (row % 2 ? 0.5 : 1); x < w; x += spacing) {
+        const p = [x, y];
+        if (
+          inside(p) &&
+          !constraints.some(
+            ([a, b]) => distance(p, xy[a], xy[b]) < spacing * 0.22,
+          )
+        )
+          xy.push(p);
+      }
+    if (xy.length > 100000)
+      throw Error("Mesh spacing is too fine; increase it.");
+    const tris = cdt2d(xy, constraints, { exterior: false });
     const edges = new Map(),
       neighbors = xy.map(() => new Set());
     for (const t of tris)
@@ -171,6 +202,16 @@ export function voronoiBuild(m, p) {
         }),
       ),
     );
+    // On curved footprint edges the section and sphere meet at the floor.
+    // Chord interpolation must not invent a rippled skirt between section points.
+    for (const i of boundary) {
+      const [x, y] = xy[i];
+      if (
+        Math.min(Math.abs(x), Math.abs(x - w), Math.abs(y), Math.abs(y - h)) >
+        1e-6
+      )
+        z[i] = Math.abs(floor);
+    }
     // Keep footprint vertices fixed; relax only interior roof heights vertically.
     for (let i = 0; i < smoothing; i++)
       z = z.map((v, k) =>

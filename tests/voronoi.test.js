@@ -18,6 +18,15 @@ const defaults = {
   spacing: 3,
   smoothing: 4,
 };
+test("uniform roof triangulation avoids the old fan slivers while retaining a closed solid", () => {
+  const r = voronoiBuild(m, { ...defaults, spacing: 2 });
+  assert(r.quality.maxAspect < 100);
+  assert(r.quality.stretchedFaces < r.quality.triangles * 0.01);
+  assert.equal(r.quality.duplicateFaces, 0);
+  assert.equal(r.quality.inconsistentEdges, 0);
+  assert.equal(r.quality.boundaryEdges, 0);
+  assert.equal(r.quality.nonManifoldEdges, 0);
+});
 for (const width of [40, 80, 160])
   test(`Voronoi ${width}: closed roof, flat bottom, clipped footprint and matching nearest seeds`, () => {
     const r = voronoiBuild(m, { ...defaults, width, height: width * 0.625 });
